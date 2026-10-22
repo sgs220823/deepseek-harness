@@ -368,3 +368,95 @@ describe('BrowserAuth', () => {
       .rejects.toThrow(/safe timestamp range/u)
   })
 })
+
+/** Gateway-compatible session value: `base64url(payload).base64url(hmac)`. */
+function tianjianSession(secret: string, payload: unknown): string {
+  const body = typeof payload === 'string'
+    ? Buffer.from(payload, 'utf8').toString('base64url')
+    : Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url')
+  const signature = createHmac('sha256', secret).update(body).digest('base64url')
+  return `tj_session=${body}.${signature}`
+}
+
+describe('BrowserAuth · TianJian mode', () => {
+  const SECRET = '0123456789abcdef0123456789abcdef0123456789abcdef'
+  const authority = '127.0.0.1:3080'
+
+  function createTianjian(): BrowserAuth {
+    return BrowserAuth.createTianjian({}, SECRET)
+  }
+
+  it('advertises the clean URL without a launch token', () => {
+    const auth = createTianjian()
+    expect(auth.authenticatedUrl('http://127.0.0.1:3080/ui/')).toBe('http://127.0.0.1:3080/ui/')
+  })
+
+  it('serves the index for a validly signed, unexpired platform session', () => {
+    const auth = createTianjian()
+    const cookie = tianjianSession(SECRET, {
+      id: 1, username: 'officer', role: 'user', jti: 'session-1',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+    expect(auth.authorizeIndex(request('/', authority, { cookie }), response().value)).toBe(true)
+    expect(auth.isAuthenticated(request('/', authority, { cookie }))).toBe(true)
+  })
+
+  it('rejects unsigned, expired, malformed, or tampered sessions with 401', () => {
+    const auth = createTianjian()
+    const state = response()
+    const res = state.value
+    expect(auth.authorizeIndex(request('/', authority), res)).toBe(false)
+    expect(state.state.status).toBe(401)
+    expect(state.state.body).toBe('dsh web authentication required; sign in at the TianJian platform gateway.\n')
+
+    const expired = tianjianSession(SECRET, {
+      id: 1, username: 'officer', role: 'user', jti: 'session-1',
+      exp: Math.floor(Date.now() / 1000) - 1,
+    })
+    expect(auth.isAuthenticated(request('/', authority, { cookie: expired }))).toBe(false)
+
+    const wrongKey = tianjianSession('feedfacefeedfacefeedfacefeedfacefeedfacefeedface', {
+      id: 1, username: 'officer', role: 'user', jti: 'session-1',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+    expect(auth.isAuthenticated(request('/', authority, { cookie: wrongKey }))).toBe(false)
+
+    for (const invalid of [
+      'garbage',
+      'only-payload',
+      'a.b',
+      tianjianSession(SECRET, { id: 1, username: 'officer', role: 'user', jti: 'session-1' }),
+      tianjianSession(SECRET, { id: 1, username: 'officer', role: 'user', jti: 'session-1', exp: 'later' }),
+      `${tianjianSession(SECRET, { id: 1, username: 'officer', role: 'user', jti: 'session-1', exp: Math.floor(Date.now() / 1000) + 3600 })}!`,
+    ]) {
+      expect(auth.isAuthenticated(request('/', authority, { cookie: invalid }))).toBe(false)
+    }
+    expect(auth.isAuthenticated(request('/', authority))).toBe(false)
+  })
+
+  it('never exchanges a launch token or issues API cookies', () => {
+    const auth = createTianjian()
+    const tokenVisit = response()
+    expect(auth.authorizeIndex(request('/?token=stale-launch-token', authority), tokenVisit.value)).toBe(false)
+    expect(tokenVisit.state.status).toBe(401)
+
+    const connect = response()
+    const publish = vi.fn(() => 'api-operator' as PeerId)
+    auth.authorizeConnect(request('/connect', authority), connect.value, false, publish)
+    expect(connect.state.status).toBe(401)
+    expect(publish).not.toHaveBeenCalled()
+    expect(auth.authenticateApi(request('/', authority))).toBeUndefined()
+  })
+
+  it('keeps official mode unchanged alongside TianJian instances', async () => {
+    const official = await createAuth(new RecordCredentials())
+    const tianjian = createTianjian()
+    expect(tianjian.isAuthenticated(request('/', authority))).toBe(false)
+    const cookie = tianjianSession(SECRET, {
+      id: 1, username: 'officer', role: 'user', jti: 'session-1',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+    expect(official.isAuthenticated(request('/', authority, { cookie }))).toBe(false)
+    expect(tianjian.isAuthenticated(request('/', authority, { cookie }))).toBe(true)
+  })
+})

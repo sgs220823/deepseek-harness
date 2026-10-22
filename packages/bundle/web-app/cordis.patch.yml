@@ -239,6 +239,10 @@
         # deployment values, for example: ['app.internal', ...ctx.webStartup.trustedHosts].
         # The listener's bind IP is accepted separately from this list.
         trustedHosts: !!js ctx.webStartup.trustedHosts
+        # TianJian shell (ADR-0011): when the gateway injects its session
+        # secret through this variable, browser authentication validates the
+        # platform tj_session cookie instead of exchanging a launch token.
+        tianjianSessionSecret: !!js process.env.DSH_TIANJIAN_SESSION_SECRET
 
     # Raw Blob and ReadableStream uploads run independently of Connection's
     # RPC and generation service.
@@ -332,9 +336,16 @@
     - id: ui-chat
       name: '@deepseek-ai/dsh-client-ui-chat'
 
-    # Official occupants for the generic sidebar and conversation brand slots.
+    # Brand occupants for the generic sidebar and conversation brand slots.
+    # Both rows stay composed: each package self-gates on its client build
+    # profile, so an official build keeps the DeepSeek brand while the
+    # TianJian shell build (ADR-0011, DSH_CLIENT_BUILD_PROFILE=tianjian)
+    # renders the TianJian brand instead.
     - id: ui-brand-official
       name: '@deepseek-ai/dsh-client-ui-brand-official'
+
+    - id: ui-brand-tianjian
+      name: '@deepseek-ai/dsh-client-ui-brand-tianjian'
 
     - id: ui-attachment
       name: '@deepseek-ai/dsh-client-ui-attachment'

@@ -107,6 +107,15 @@ export interface ConnectionConfig {
   cookieMaxAgeDays?: number
   /** Maximum buffered JSON body for every `/api` request. Default: 300 MiB. */
   maxRequestBodyBytes?: number
+  /**
+   * TianJian platform gateway session secret (the value injected through
+   * `DSH_TIANJIAN_SESSION_SECRET`, ADR-0011). When set, browser authentication
+   * validates the gateway's `tj_session` cookie instead of minting dsh-auth
+   * cookies: no launch-token exchange, no API cookies. Account state is the
+   * gateway's live check, so this instance validates signature and expiry only.
+   * Unset or empty keeps the official launch-token flow unchanged.
+   */
+  tianjianSessionSecret?: string
 }
 
 export const Config: z<ConnectionConfig> = z.object({
@@ -114,6 +123,7 @@ export const Config: z<ConnectionConfig> = z.object({
   trustedHosts: z.array(String).default([]),
   cookieMaxAgeDays: z.natural().min(1).default(30),
   maxRequestBodyBytes: z.natural().min(1).default(DEFAULT_MAX_REQUEST_BODY_BYTES),
+  tianjianSessionSecret: z.string().default(''),
 })
 
 /**
@@ -129,6 +139,7 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
   const trustedHosts = config?.trustedHosts ?? []
   const cookieMaxAgeDays = config?.cookieMaxAgeDays ?? 30
   const maxRequestBodyBytes = config?.maxRequestBodyBytes ?? DEFAULT_MAX_REQUEST_BODY_BYTES
+  const tianjianSessionSecret = config?.tianjianSessionSecret ?? ''
   // Config boundary: a malformed entry fails the load loudly here rather than
   // silently authorizing its hostname prefix at request time.
   for (const entry of trustedHosts) assertTrustedAuthority(entry)
@@ -136,7 +147,9 @@ export async function apply(ctx: Context, config?: ConnectionConfig): Promise<vo
   const connection = new HostConnectionService(
     ctx,
     trustedHosts,
-    await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays),
+    tianjianSessionSecret === ''
+      ? await BrowserAuth.create(ctx.root, ctx.credentials, cookieMaxAgeDays)
+      : BrowserAuth.createTianjian(ctx.root, tianjianSessionSecret),
   )
   ctx.inject(['webServer'], (webCtx) => {
     assertImageBodyCapacity(webCtx, maxRequestBodyBytes)

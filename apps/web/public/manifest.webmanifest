@@ -1,9 +1,9 @@
 {
-  "name": "DeepSeek Harness",
-  "short_name": "DSH",
+  "name": "天鉴智能体平台",
+  "short_name": "天鉴",
   "start_url": "./",
   "scope": "./",
-  "display": "fullscreen",
+  "display": "standalone",
   "icons": [
     {
       "src": "favicon.svg",

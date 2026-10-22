@@ -21,6 +21,9 @@ const STORED_SECRET_VERSION = 1
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/
 const PROCESS_LAUNCH_TOKENS = new WeakMap<object, string>()
 
+/** Platform gateway session cookie consumed in TianJian mode (ADR-0011). */
+const TIANJIAN_SESSION_COOKIE = 'tj_session'
+
 interface StoredSecretPayload {
   readonly version: typeof STORED_SECRET_VERSION
   readonly secret: string
@@ -179,6 +182,35 @@ function decodeCookie(value: string, secret: Buffer): CookiePayload | undefined 
   return { version: 2, ...payload, id: decoded.id as PeerId }
 }
 
+/**
+ * Validate a TianJian gateway session value: `base64url(payload).base64url(hmac)`
+ * over the raw session secret, with a payload `exp` (unix seconds) still in
+ * the future. Mirrors the gateway's `parseSessionValue` signature and expiry
+ * checks only — account state (revocation, disablement) is the gateway's
+ * per-request job, since this instance has no account table.
+ * @param value - the `tj_session` cookie value.
+ * @param secret - the gateway session secret, byte-for-byte as the gateway signs with.
+ * @param now - current epoch millisecond timestamp (test injection).
+ * @returns true only for a correctly signed, unexpired session.
+ */
+function parseTianjianSession(value: string, secret: string, now: number = Date.now()): boolean {
+  const dot = value.lastIndexOf('.')
+  if (dot <= 0) return false
+  const payloadB64 = value.slice(0, dot)
+  const signature = value.slice(dot + 1)
+  const expected = createHmac('sha256', secret).update(payloadB64).digest('base64url')
+  const expectedBytes = Buffer.from(expected)
+  const actualBytes = Buffer.from(signature)
+  if (expectedBytes.byteLength !== actualBytes.byteLength || !timingSafeEqual(expectedBytes, actualBytes)) return false
+  let payload: unknown
+  try {
+    payload = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'))
+  } catch {
+    return false
+  }
+  return isRecord(payload) && typeof payload.exp === 'number' && payload.exp > now / 1000
+}
+
 async function initializeSecret(credentials: CredentialProvider): Promise<Buffer> {
   const generated: StoredSecretPayload = {
     version: STORED_SECRET_VERSION,
@@ -206,13 +238,21 @@ async function initializeSecret(credentials: CredentialProvider): Promise<Buffer
 export class BrowserAuth {
   private readonly launchToken: string
   private readonly maxAgeMilliseconds: number
+  /** Set only in TianJian mode; official mode leaves it undefined. */
+  private readonly tianjianSecret: string | undefined
 
   private constructor(
     processOwner: object,
     private readonly secret: Buffer,
     maxAgeDays: number,
+    tianjianSecret?: string,
   ) {
+    // The launch token stays minted even in TianJian mode, where the mode
+    // branches below never exchange it; an unused in-memory token is inert.
     this.launchToken = processLaunchToken(processOwner)
+    this.tianjianSecret = tianjianSecret
+    // TianJian mode never mints cookies, so maxAgeDays 0 keeps the arithmetic
+    // below trivially valid while the mode ignores it.
     this.maxAgeMilliseconds = maxAgeDays * DAY_MILLISECONDS
     if (!Number.isSafeInteger(this.maxAgeMilliseconds)
       || !Number.isSafeInteger(Date.now() + this.maxAgeMilliseconds)) {
@@ -237,11 +277,28 @@ export class BrowserAuth {
   }
 
   /**
-   * Add this process's launch token to the caller's application URL.
+   * Initialize browser authentication in TianJian mode (ADR-0011), where the
+   * platform gateway's `tj_session` cookie replaces the launch-token exchange
+   * and minted dsh-auth cookies entirely. The instance validates signature
+   * and expiry only; account state stays with the gateway, which fronts every
+   * browser request and rechecks it live.
+   * @param processOwner - root application context (retained for mode symmetry).
+   * @param sessionSecret - gateway session secret as injected through
+   * `DSH_TIANJIAN_SESSION_SECRET`, signed byte-for-byte like the gateway does.
+   * @returns an authentication owner that accepts only valid platform sessions.
+   */
+  static createTianjian(processOwner: object, sessionSecret: string): BrowserAuth {
+    return new BrowserAuth(processOwner, Buffer.alloc(0), 0, sessionSecret)
+  }
+
+  /**
+   * Add this process's launch token to the caller's application URL; in
+   * TianJian mode the URL carries no token because none is exchanged.
    * @param baseUrl - clean browser URL whose authority and mount are preserved.
    * @returns the same URL carrying the process token as its sole authentication input.
    */
   authenticatedUrl(baseUrl: string): string {
+    if (this.tianjianSecret !== undefined) return baseUrl
     const url = new URL(baseUrl)
     url.searchParams.set(TOKEN_QUERY, this.launchToken)
     return url.href
@@ -261,6 +318,13 @@ export class BrowserAuth {
    * @returns true only when the caller may serve index.html.
    */
   authorizeIndex(req: ConnectionIndexRequest, res: ConnectionIndexResponse, secure = false): boolean {
+    if (this.tianjianSecret !== undefined) {
+      // TianJian mode: no launch-token exchange. The gateway fronts the
+      // instance, so a valid platform session alone may load the index.
+      if (this.isAuthenticated(req, secure)) return true
+      this.writeUnauthorized(req, res)
+      return false
+    }
     /* v8 ignore next -- node:http always supplies url on server requests. */
     const url = new URL(req.url ?? '/', 'http://dsh.invalid')
     const tokens = url.searchParams.getAll(TOKEN_QUERY)
@@ -317,6 +381,12 @@ export class BrowserAuth {
     secure: boolean,
     publish: (interactions: ConnectionInteractions) => PeerId,
   ): void {
+    if (this.tianjianSecret !== undefined) {
+      // TianJian mode: API-client cookies are never issued, so the shared API
+      // carrier over /connect is closed.
+      this.writeUnauthorized(req, res)
+      return
+    }
     const url = new URL(req.url ?? '/', 'http://dsh.invalid')
     const declarations = url.searchParams.getAll('interactions')
     const interactions = declarations[0] ?? 'none'
@@ -354,6 +424,7 @@ export class BrowserAuth {
    * @returns true only for an unexpired cookie signed by this activation's loaded secret.
    */
   isAuthenticated(request: ConnectionTrustRequest, secure = false): boolean {
+    if (this.tianjianSecret !== undefined) return this.authenticateTianjian(request)
     return this.authenticate(request, secure)?.version === COOKIE_PAYLOAD_VERSION
   }
 
@@ -364,8 +435,19 @@ export class BrowserAuth {
    * @returns the signed operator id, or undefined for invalid, expired, or browser cookies.
    */
   authenticateApi(request: ConnectionTrustRequest, secure = false): PeerId | undefined {
+    if (this.tianjianSecret !== undefined) return undefined
     const payload = this.authenticate(request, secure)
     return payload?.version === 2 ? payload.id : undefined
+  }
+
+  private authenticateTianjian(request: ConnectionTrustRequest): boolean {
+    const secret = this.tianjianSecret
+    if (secret === undefined) return false
+    const rawCookie = header(request.headers, 'cookie')
+    if (rawCookie === undefined) return false
+    const value = cookieValue(rawCookie, TIANJIAN_SESSION_COOKIE)
+    if (value === undefined) return false
+    return parseTianjianSession(value, secret)
   }
 
   private authenticate(request: ConnectionTrustRequest, secure: boolean): CookiePayload | undefined {
@@ -383,12 +465,13 @@ export class BrowserAuth {
   }
 
   private writeUnauthorized(req: ConnectionIndexRequest, res: ConnectionIndexResponse): void {
+    const message = this.tianjianSecret === undefined
+      ? 'dsh web authentication required; reopen the URL printed by dsh web.\n'
+      : 'dsh web authentication required; sign in at the TianJian platform gateway.\n'
     res.writeHead(401, {
       'cache-control': 'no-store',
       'content-type': 'text/plain; charset=utf-8',
     })
-    res.end(req.method === 'HEAD'
-      ? undefined
-      : 'dsh web authentication required; reopen the URL printed by dsh web.\n')
+    res.end(req.method === 'HEAD' ? undefined : message)
   }
 }
