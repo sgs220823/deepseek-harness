@@ -80,7 +80,9 @@ describe('TianJian browser-brand plugin', () => {
 
   it('renders the tianjian name and mark at the requested size', () => {
     const name = render(<TianJianBrandName />)
-    expect(name.container.textContent).toBe('天鉴智能体')
+    // Platform name aligned with the tianjian brand tokens (R11 single source:
+    // tianjian plugins/shared/src/brand.ts; values.ts copy + cross-repo CI check).
+    expect(name.container.textContent).toBe('天鉴智能体平台')
     name.unmount()
 
     const mark = render(<TianJianBrandMark size={34} />)
