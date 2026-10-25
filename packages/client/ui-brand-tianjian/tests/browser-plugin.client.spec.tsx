@@ -4,12 +4,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { apply, inject } from '../src/client/index.ts'
-import { TianJianBrandMark, TianJianBrandName } from '../src/client/Brand.tsx'
+import { BRAND_SWITCH_STYLE_ID, TianJianBrandMark, TianJianBrandName } from '../src/client/Brand.tsx'
 import { apply as hostApply } from '../src/index.ts'
 
 afterEach(() => {
   cleanup()
   vi.unstubAllEnvs()
+  document.getElementById(BRAND_SWITCH_STYLE_ID)?.remove()
 })
 
 const HOLES = [
@@ -53,6 +54,8 @@ describe('TianJian browser-brand plugin', () => {
     const fiber = before.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     for (const hole of HOLES) expect(before.slots.entries(hole)).toHaveLength(1)
+    // Mark light/dark switch CSS is injected once at apply time (not per mark).
+    expect(document.getElementById(BRAND_SWITCH_STYLE_ID)).not.toBeNull()
 
     before.disposeHoles?.()
     for (const hole of HOLES) expect(before.slots.entries(hole)).toHaveLength(0)
@@ -87,7 +90,11 @@ describe('TianJian browser-brand plugin', () => {
 
     const mark = render(<TianJianBrandMark size={34} />)
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('34')
+    // FE8 mapping: >=32px uses the 07 line asset (viewBox 2.5 4 155 155).
+    expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('2.5 4 155 155')
     mark.rerender(<TianJianBrandMark size={24} />)
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
+    // 16–24px uses the 08 solid asset (viewBox 0 0 160 160).
+    expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 160 160')
   })
 })

@@ -10,9 +10,10 @@ import {
 /**
  * Light/dark mark switching (the host toggles `body[data-ds-dark-theme]`).
  * The two SVG variants are byte-identical copies of the tianjian assets, so
- * the mono mark keeps its exact geometry in both themes.
+ * the mono mark keeps its exact geometry in both themes. Injected once by the
+ * client plugin (`index.ts`) instead of once per mark instance.
  */
-const MARK_SWITCH_CSS = `
+export const MARK_SWITCH_CSS = `
 .tj-brand-mark-light { display: inline-flex; }
 .tj-brand-mark-dark { display: none; }
 body[data-ds-dark-theme] .tj-brand-mark-light { display: none; }
@@ -20,10 +21,15 @@ body[data-ds-dark-theme] .tj-brand-mark-dark { display: inline-flex; }
 .tj-brand-mark-light svg, .tj-brand-mark-dark svg { display: block; }
 `.trim()
 
+/** `<style>` id for the one-time mark-switch CSS injection. */
+export const BRAND_SWITCH_STYLE_ID = 'tj-brand-switch'
+
 /** Apply the host-requested size to the source SVG's fixed 160px canvas. */
 function sized(svg: string, size: number): string {
+  const SIZE_ATTR = 'width="160" height="160"'
+  if (!svg.includes(SIZE_ATTR)) throw new Error('品牌 SVG 缺少 160px 画布尺寸属性（资产格式变化）')
   return svg
-    .replace('width="160" height="160"', `width="${size}" height="${size}"`)
+    .replace(SIZE_ATTR, `width="${size}" height="${size}"`)
     .replace('role="img"', 'aria-hidden="true" focusable="false"')
 }
 
@@ -46,7 +52,6 @@ export function TianJianBrandMark({ size }: SidebarBrandMarkOwnerProps) {
       aria-label="天鉴标识"
       style={{ display: 'inline-flex', width: size, height: size }}
     >
-      <style>{MARK_SWITCH_CSS}</style>
       <span className="tj-brand-mark-light" dangerouslySetInnerHTML={{ __html: sized(light, size) }} />
       <span className="tj-brand-mark-dark" dangerouslySetInnerHTML={{ __html: sized(dark, size) }} />
     </span>
