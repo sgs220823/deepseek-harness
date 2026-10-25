@@ -4,6 +4,9 @@
 
 pre-commit:
   jobs:
+    - name: tj fork isolation guard
+      run: node scripts/tj-guards/fork-discipline.mjs
+
     - name: translation pairing (staged records)
       glob: '*.i18n.yaml'
       exclude:
