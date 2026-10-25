@@ -9,20 +9,20 @@ kind: "package-reference"
 
 ## 摘要
 
-本包让 `tianjian` 客户端构建在侧栏显示天鉴标记与名称，是官方 web 工作台薄壳的品牌缝（ADR-0011）。其他构建 profile 保留壳层兜底；对话 hero 恒为声明方包的动画鱼形兜底。无运行时状态、不参与模型请求。
+本包让 `tianjian` 客户端构建在侧栏显示天鉴标记与名称，是官方 web 工作台薄壳的品牌缝（ADR-0011）。其他构建 profile 保留壳层兜底；对话 hero 恒为声明方包的动画鱼形兜底。唯一模块级状态是资产漂移的一次性告警标志；不参与模型请求。
 
 ## 目录
 
-- [使用本包](#使用本包)
-- [理解实现](#理解实现)
-- [延伸阅读](#延伸阅读)
-- [模型体验](#模型体验)
-- [已知限制与待办](#已知限制与待办)
-- [开发者备注](#开发者备注)
+- [使用本包](#use-this-package)
+- [理解实现](#understand-the-implementation)
+- [延伸阅读](#further-exploration)
+- [模型体验](#model-experience)
+- [已知限制与待办](#known-limitations-and-deferred-work)
+- [开发者备注](#dev-note)
 
 -----
 
-<a id="使用本包"></a>
+<a id="use-this-package"></a>
 ## 使用本包
 
 在天鉴壳层的浏览器 roster 中挂载本插件，并以 `tianjian` profile 构建客户端，占位才会注册。同一 roster 保留官方品牌行；两个包各自按构建 profile 自启停，因此同一时刻只渲染一组品牌。
@@ -37,7 +37,7 @@ kind: "package-reference"
 
 -----
 
-<a id="理解实现"></a>
+<a id="understand-the-implementation"></a>
 ## 理解实现
 
 <details>
@@ -49,16 +49,16 @@ kind: "package-reference"
 
 -----
 
-<a id="延伸阅读"></a>
+<a id="further-exploration"></a>
 ## 延伸阅读
 
-- [ui-sidebar](../ui-sidebar/README.md) —— 声明 `sidebar.brand.mark` / `sidebar.brand.name` 并渲染其兜底。
-- [ui-conversation](../ui-conversation/README.md) —— 在 hero 声明 `conversation.hero.brand.mark`。
-- [Web client architecture](../../../docs/subsystems/web-client.md) —— 浏览器插件行如何加载与注册 slot。
+- [ui-sidebar](../ui-sidebar/README.zh.md) —— 声明 `sidebar.brand.mark` / `sidebar.brand.name` 并渲染其兜底。
+- [ui-conversation](../ui-conversation/README.zh.md) —— 在 hero 声明 `conversation.hero.brand.mark`。
+- [Web client architecture](../../../docs/subsystems/web-client.zh.md) —— 浏览器插件行如何加载与注册 slot。
 
 -----
 
-<a id="模型体验"></a>
+<a id="model-experience"></a>
 ## 模型体验
 
 无，本包仅提供浏览器侧展示，不进入任何模型请求。
@@ -69,14 +69,15 @@ kind: "package-reference"
 
 ## 已知限制与待办
 
-<a id="已知限制与待办"></a>
+<a id="known-limitations-and-deferred-work"></a>
 
 以下限制界定品牌展示的供给方式，属当前包约束而非品牌设计对比或任务积压。
 
 - **单一占位组** —— 其他品牌呈现需另起 Cordis 包接管同一批 slot。
 - **浏览器标题独立** —— 标题文字由构建期 `DSH_CLIENT_TITLE` 决定，不经由 UI slot。
+- **资产漂移时降级、永不抛错** —— 若标记 SVG 丢失固定 `160px` 画布，渲染短名文本并只告警一次；`pnpm check:brand` 仍会拦发布。侧栏品牌 slot 之上没有 error boundary，渲染期抛错会带垮整行。
 
-<a id="开发者备注"></a>
+<a id="dev-note"></a>
 ### 开发者备注
 
 <details>

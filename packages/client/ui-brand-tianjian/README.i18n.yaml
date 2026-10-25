@@ -1,0 +1,43 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write packages/client/ui-brand-tianjian/README.md
+/:
+  en: 065baaa4ddf7fc7d
+  zh: c2b7d082e96f95e3
+/deepseek-ai-dsh-client-ui-brand-tianjian:
+  en: dbf13af80ee2f287
+  zh: 2558fde500a26a6e
+/deepseek-ai-dsh-client-ui-brand-tianjian/summary:
+  en: e2e0d7a86fea135c
+  zh: cea20da03fda3528
+/deepseek-ai-dsh-client-ui-brand-tianjian/table-of-contents:
+  en: d152484eb41ac6b4
+  zh: d7d5cf21ecd8490a
+/deepseek-ai-dsh-client-ui-brand-tianjian/use-this-package:
+  en: 75aede939e48f6bf
+  zh: aa1c714c6760a530
+/deepseek-ai-dsh-client-ui-brand-tianjian/use-this-package/choosing-the-profile:
+  en: 15b5493017cfa956
+  zh: d3267ed9b72f4da5
+/deepseek-ai-dsh-client-ui-brand-tianjian/use-this-package/replacing-the-brand:
+  en: bffd35d14ee455b0
+  zh: 8c1bb62c09fa63c6
+/deepseek-ai-dsh-client-ui-brand-tianjian/understand-the-implementation:
+  en: 4e4aa617edd7f4ad
+  zh: 65be749139b1da82
+/deepseek-ai-dsh-client-ui-brand-tianjian/further-exploration:
+  en: c9ae240d8e831cc0
+  zh: 8bf57a167e7513b8
+/deepseek-ai-dsh-client-ui-brand-tianjian/model-experience:
+  en: 618008c7641070e7
+  zh: e71f0b7207adbe22
+/deepseek-ai-dsh-client-ui-brand-tianjian/model-experience/kv-cache-effect:
+  en: ca75c51c89c2c9b0
+  zh: 2bc658c214738d01
+/deepseek-ai-dsh-client-ui-brand-tianjian/known-limitations-and-deferred-work:
+  en: 6ce6b967460117aa
+  zh: d26a65bc23946c53
+/deepseek-ai-dsh-client-ui-brand-tianjian/known-limitations-and-deferred-work/dev-note:
+  en: e67f633dc6fe7773
+  zh: f5cde749e0aa3e66

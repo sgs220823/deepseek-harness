@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package gives a `tianjian` client build the TianJian mark and name in the sidebar. Other build profiles keep the shell fallbacks, and the conversation hero always uses the animated fish. Choose it for the TianJian platform shell (ADR-0011); the official build composes the official brand package instead. It has no runtime state and does not affect model requests.
+This package gives a `tianjian` client build the TianJian mark and name in the sidebar. Other build profiles keep the shell fallbacks, and the conversation hero always uses the animated fish. Choose it for the TianJian platform shell (ADR-0011); the official build composes the official brand package instead. Its only module-level state is a warn-once flag for asset drift; it does not affect model requests.
 
 ## Table of Contents
 
@@ -78,6 +78,7 @@ These limits define how brand presentation is supplied. They are current package
 
 - **One occupant set** — alternative presentation belongs in another Cordis package occupying the same slots.
 - **The browser title is independent** — `DSH_CLIENT_TITLE` selects title text at build time rather than through a UI slot.
+- **Asset drift degrades, never throws** — if a mark SVG loses its fixed `160px` canvas, the mark renders the short name as text and warns once; `pnpm check:brand` still blocks the release. There is no error boundary above the sidebar brand slot, so a render-time throw would take down the whole row.
 
 <a id="dev-note"></a>
 ### Dev Note

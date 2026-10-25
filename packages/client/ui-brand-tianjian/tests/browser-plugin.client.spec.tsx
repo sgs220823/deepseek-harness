@@ -98,10 +98,39 @@ describe('TianJian browser-brand plugin', () => {
     expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 160 160')
   })
 
-  it('sized: 160px 画布 → 请求尺寸；画布缺失（资产漂移）→ undefined（渲染层降级契约，不在 render 抛错）', () => {
+  it('sized: 160px 画布 → 请求尺寸；画布缺失 → undefined（纯函数契约）', () => {
     const sizedSvg = sized('<svg width="160" height="160" role="img"></svg>', 24)
     expect(sizedSvg).toContain('width="24" height="24"')
     expect(sizedSvg).toContain('aria-hidden="true"')
     expect(sized('<svg width="120" height="120"></svg>', 24)).toBeUndefined()
+  })
+
+  it('资产画布漂移时渲染短名文本且不抛错，告警只发一次（render 级降级契约）', async () => {
+    const DRIFTED_SVG = '<svg viewBox="0 0 120 120"></svg>'
+    vi.resetModules()
+    vi.doMock('../src/client/values.ts', () => ({
+      TIANJIAN_BRAND_VALUES: { name: '天鉴智能体平台', shortName: '天鉴' },
+      TIANJIAN_BRAND_MARK_SVG: DRIFTED_SVG,
+      TIANJIAN_BRAND_MARK_INVERSE_SVG: DRIFTED_SVG,
+      TIANJIAN_BRAND_MARK_SMALL_SVG: DRIFTED_SVG,
+      TIANJIAN_BRAND_MARK_SMALL_INVERSE_SVG: DRIFTED_SVG,
+    }))
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const { TianJianBrandMark: DriftedMark } = await import('../src/client/Brand.tsx')
+      const first = render(<DriftedMark size={34} />)
+      expect(first.container.querySelector('svg')).toBeNull()
+      expect(first.container.textContent).toBe('天鉴')
+      expect(warn).toHaveBeenCalledTimes(1)
+      // 告警是一次性的（模块级 flag）：第二个实例降级但不再刷屏。
+      const second = render(<DriftedMark size={24} />)
+      expect(second.container.querySelector('svg')).toBeNull()
+      expect(second.container.textContent).toBe('天鉴')
+      expect(warn).toHaveBeenCalledTimes(1)
+    } finally {
+      warn.mockRestore()
+      vi.doUnmock('../src/client/values.ts')
+      vi.resetModules()
+    }
   })
 })
