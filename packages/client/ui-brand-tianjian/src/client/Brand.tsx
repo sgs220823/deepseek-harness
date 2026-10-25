@@ -29,7 +29,7 @@ export const BRAND_SWITCH_STYLE_ID = 'tj-brand-switch'
  *  must degrade to the plain short name, never throw: asset drift is already
  *  gated by `pnpm check:brand` before release, and a render-time throw would
  *  take down the whole sidebar brand slot (no error boundary above it). */
-function sized(svg: string, size: number): string | undefined {
+export function sized(svg: string, size: number): string | undefined {
   const SIZE_ATTR = 'width="160" height="160"'
   if (!svg.includes(SIZE_ATTR)) return undefined
   return svg

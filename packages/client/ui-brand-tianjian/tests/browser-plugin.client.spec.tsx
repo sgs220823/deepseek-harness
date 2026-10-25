@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render } from '@testing-library/react'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { apply, inject } from '../src/client/index.ts'
-import { BRAND_SWITCH_STYLE_ID, TianJianBrandMark, TianJianBrandName } from '../src/client/Brand.tsx'
+import { BRAND_SWITCH_STYLE_ID, TianJianBrandMark, TianJianBrandName, sized } from '../src/client/Brand.tsx'
 import { apply as hostApply } from '../src/index.ts'
 
 afterEach(() => {
@@ -96,5 +96,12 @@ describe('TianJian browser-brand plugin', () => {
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
     // 16–24px uses the 08 solid asset (viewBox 0 0 160 160).
     expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 160 160')
+  })
+
+  it('sized: 160px 画布 → 请求尺寸；画布缺失（资产漂移）→ undefined（渲染层降级契约，不在 render 抛错）', () => {
+    const sizedSvg = sized('<svg width="160" height="160" role="img"></svg>', 24)
+    expect(sizedSvg).toContain('width="24" height="24"')
+    expect(sizedSvg).toContain('aria-hidden="true"')
+    expect(sized('<svg width="120" height="120"></svg>', 24)).toBeUndefined()
   })
 })
