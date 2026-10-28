@@ -407,7 +407,7 @@ describe('BrowserAuth · TianJian mode', () => {
     const res = state.value
     expect(auth.authorizeIndex(request('/', authority), res)).toBe(false)
     expect(state.state.status).toBe(401)
-    expect(state.state.body).toBe('dsh web authentication required; sign in at the TianJian platform gateway.\n')
+    expect(state.state.body).toBe('登录已过期，请回到天鉴门户重新进入。\n')
 
     const expired = tianjianSession(SECRET, {
       id: 1, username: 'officer', role: 'user', jti: 'session-1',

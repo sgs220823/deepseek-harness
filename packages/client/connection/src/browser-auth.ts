@@ -467,7 +467,7 @@ export class BrowserAuth {
   private writeUnauthorized(req: ConnectionIndexRequest, res: ConnectionIndexResponse): void {
     const message = this.tianjianSecret === undefined
       ? 'dsh web authentication required; reopen the URL printed by dsh web.\n'
-      : 'dsh web authentication required; sign in at the TianJian platform gateway.\n'
+      : '登录已过期，请回到天鉴门户重新进入。\n'
     res.writeHead(401, {
       'cache-control': 'no-store',
       'content-type': 'text/plain; charset=utf-8',
