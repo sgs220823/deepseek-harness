@@ -145,7 +145,10 @@
   align-items: flex-start;
   --dsh-chat-flow-gap: 12px;
   --dsw-alias-label-shimmer: var(--dsw-alias-label-deep-diving-shimmer);
-  color: var(--dsw-alias-label-deep-diving);
+  /* Running state is one of the platform's accent surfaces: the TianJian brand
+     profile redefines --tj-accent (navy); the official profile falls through to
+     its deep-diving ink. */
+  color: var(--tj-accent, var(--dsw-alias-label-deep-diving));
   font-size: calc(var(--dsh-content-font-size, 14px) - 2px);
   line-height: calc(22px + var(--dsh-content-font-delta, 0px));
 }
@@ -186,35 +189,53 @@
   flex: none;
   width: calc(14px + var(--dsh-content-font-delta, 0px));
   height: calc(14px + var(--dsh-content-font-delta, 0px));
-  /* The fixed footprint contains the animation's layout and paint. */
+  /* The fixed footprint contains the mark's layout and paint. */
   contain: strict;
   overflow: hidden;
 }
 
-.runningWhaleAnimated {
-  display: none;
+.runningShield {
+  display: block;
+}
+
+/* 3px running progress line (mockup「会话进行中」): a track under the status row
+   and an accent segment sweeping across it while the Turn runs. */
+.runningProgress {
+  position: relative;
+  display: block;
+  align-self: stretch;
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: var(--dsw-alias-border-l2);
+  overflow: hidden;
+}
+
+.runningProgressFill {
   position: absolute;
-  inset: 0;
+  inset-block: 0;
+  left: 0;
+  width: 40%;
+  border-radius: 2px;
+  background: var(--tj-accent, var(--dsw-alias-state-business-primary));
+  animation: running-progress-sweep 1.6s ease-in-out infinite;
 }
 
-.runningWhaleStill {
-  display: initial;
+@keyframes running-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: translateX(250%);
+  }
 }
 
-@supports (mask-mode: alpha) and (mask-image: url('')) {
-  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
-    .runningWhaleAnimated {
-      display: block;
-      background: currentColor;
-      mask: url('./running-whale@2x.png') center / 100% 100% no-repeat;
-      mask-mode: alpha;
-      /* Keep animated-mask repaints on an icon-sized composited layer. */
-      will-change: transform;
-    }
-
-    .runningWhaleStill {
-      display: none;
-    }
+@media (prefers-reduced-motion: reduce) {
+  .runningProgressFill {
+    width: 62%;
+    animation: none;
+    transform: none;
   }
 }
 

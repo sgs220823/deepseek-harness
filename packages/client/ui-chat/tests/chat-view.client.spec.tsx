@@ -598,7 +598,7 @@ function turnProcessControl(container: HTMLElement): HTMLButtonElement | null {
 }
 
 function runningContent(container: HTMLElement): HTMLElement | null {
-  return container.querySelector<HTMLElement>('[data-chat-running] > :last-child')
+  return container.querySelector<HTMLElement>('[data-chat-running-content]')
 }
 
 function withClock(time: number, run: () => void): () => void {
@@ -2367,7 +2367,7 @@ describe('ChatView', () => {
       '本轮运行失败plugin exploded',
       '本轮运行失败当前请求的额度已用尽QUOTA',
       '本轮运行失败当前请求的额度已用尽ACCOUNT_QUOTA',
-      '任务已停止DSH 进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。',
+      '任务已停止工作台进程在本轮完成前退出（例如被强制结束、崩溃或关闭超时），重新启动后本轮已中止。未完成的工具调用结果未知。',
     ])
     // The transient notice is the frame-wide host's job; the failure row keeps
     // neither a recharge affordance nor a toast of its own.
@@ -4394,10 +4394,11 @@ describe('ChatView', () => {
     const status = column.querySelector('[data-chat-running]')
     expect(column.lastElementChild).toBe(status)
     expect(within(status as HTMLElement).getByRole('status').textContent).toBe('深度求索中')
-    expect(status?.lastElementChild?.textContent).toBe('深度求索中')
+    expect(status?.querySelector('[data-chat-running-content]')?.textContent).toBe('深度求索中')
+    expect(status?.querySelector('[data-chat-running-progress]')).not.toBeNull()
     const icon = status?.querySelector('svg')?.parentElement
     expect(icon?.getAttribute('aria-hidden')).toBe('true')
-    expect(icon?.firstElementChild?.tagName).toBe('SPAN')
+    expect(icon?.firstElementChild?.tagName.toLowerCase()).toBe('svg')
     expect(icon?.querySelectorAll('path')).toHaveLength(1)
     expect(icon?.getAttribute('style')).toBeNull()
     expect(status?.querySelector('animate')).toBeNull()

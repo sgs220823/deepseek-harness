@@ -16,7 +16,8 @@ function statusHarness(startTime?: number) {
   const view = render(<RunningStatus startTime={startTime} t={t} />)
   return {
     ...view,
-    content: () => view.container.querySelector('[data-chat-running] > :last-child'),
+    content: () => view.container.querySelector('[data-chat-running-content]'),
+    progress: () => view.container.querySelector('[data-chat-running-progress]'),
     set: (nextStartTime?: number) => { view.rerender(<RunningStatus startTime={nextStartTime} t={t} />) },
   }
 }
@@ -64,6 +65,16 @@ describe('RunningStatus', () => {
     act(() => { vi.advanceTimersByTime(3_000) })
     expect(view.content()?.textContent).toMatch(/^深度求索中，用时 \d+秒 ···$/)
     expect(view.content()?.textContent).not.toContain('-')
+  })
+  it('renders the shield mark and the 3px progress line next to the status text', () => {
+    const view = statusHarness(1_000)
+    const content = view.content()
+    // The dropped whale asset leaves a shield SVG (16-unit viewBox) in the row.
+    expect(content?.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 16 16')
+    const progress = view.progress()
+    expect(progress).not.toBeNull()
+    expect(progress?.getAttribute('aria-hidden')).toBe('true')
+    expect(progress?.children).toHaveLength(1)
   })
 
 })
