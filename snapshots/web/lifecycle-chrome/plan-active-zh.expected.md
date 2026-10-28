@@ -15,12 +15,14 @@
 - button "账号菜单": 更多
 - banner:
   - button "打开右侧边栏"
-- text: 探索未至之境 预览版
+- text: 让证据开口说话
+- paragraph: 把案情说给天鉴：检索、比对、整理成文，一次到位。
 - button "选择工作区": workspace
 - button "标准模式"
-- textbox "描述你想要构建的内容, / 调用指令, @ 文件或对话"
+- textbox "描述案情，或粘贴笔录、账单、话术文本…"
 - button "添加文件或调用指令"
 - button "访问模式，当前：工作区内修改": 工作区内修改
 - button "计划模式已开启，按下关闭": 计划
 - button "选择模型，当前 DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "发送消息" [disabled]
+- paragraph: 独立实例运行 · 数据不出内网
