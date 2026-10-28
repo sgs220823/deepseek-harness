@@ -1,4 +1,4 @@
-DeepSeek Harness 无法使用
+天鉴智能体平台无法使用
 应用无法启动或已意外停止。
 Desktop Host failed
 Plugin initialization failed

@@ -1,6 +1,6 @@
-DeepSeek Harness
-DeepSeek Harness
-Welcome to DeepSeek Harness
-Build potential. Explore intelligence.
+TianJian Agent Platform
+TianJian Agent Platform
+Welcome to TianJian Agent Platform
+Let the evidence speak
 Sign in
 Add API Key
