@@ -150,11 +150,11 @@ export function HeroShell({ t, renderSlot, children }: HeroShellProps) {
             })}
           </span>
           <span className={css.titleGroup}>
-            {/* Own element: keeps the headline text addressable apart from the badge. */}
+            {/* Own element keeps the headline text addressable on its own. */}
             <span>{t('hero.headline')}</span>
-            <span className={css.previewBadge}>{t('hero.preview')}</span>
           </span>
         </div>
+        <p className={css.subline}>{t('hero.subline')}</p>
         <div className={css.body}>
           {/* The composer remains mounted outside this component. */}
         </div>

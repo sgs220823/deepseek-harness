@@ -517,6 +517,16 @@ button.crumb:hover {
   z-index: 1;
 }
 
+/* Hero trust meta under the input card: one quiet line stating where the
+   instance and the data live (copy from the workbench redesign). */
+.heroTrust {
+  margin: 8px 0 0;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
 .heroWorkspaceRow {
   display: flex;
   align-items: center;

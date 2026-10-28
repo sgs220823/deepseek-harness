@@ -5,12 +5,14 @@ import { cleanup, render } from '@testing-library/react'
 import { SlotRegistry } from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { apply, inject } from '../src/client/index.ts'
 import { BRAND_SWITCH_STYLE_ID, TianJianBrandMark, TianJianBrandName, sized } from '../src/client/Brand.tsx'
+import { BRAND_TOKENS_STYLE_ID } from '../src/client/tokens.ts'
 import { apply as hostApply } from '../src/index.ts'
 
 afterEach(() => {
   cleanup()
   vi.unstubAllEnvs()
   document.getElementById(BRAND_SWITCH_STYLE_ID)?.remove()
+  document.getElementById(BRAND_TOKENS_STYLE_ID)?.remove()
 })
 
 const HOLES = [
@@ -19,6 +21,9 @@ const HOLES = [
 ] as const
 
 const HERO_HOLE = 'conversation.hero.brand.mark'
+
+/** Every slot this build fills, including the conversation hero mark. */
+const FILLED_HOLES = [...HOLES, HERO_HOLE] as const
 
 async function bench(declare = true) {
   const ctx = new Context()
@@ -45,7 +50,7 @@ describe('TianJian browser-brand plugin', () => {
     vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', 'official')
     const subject = await bench()
     await subject.ctx.plugin({ inject: [...inject], apply }).await()
-    for (const hole of HOLES) expect(subject.slots.entries(hole)).toHaveLength(0)
+    for (const hole of FILLED_HOLES) expect(subject.slots.entries(hole)).toHaveLength(0)
   })
 
   it('fills declarations before or after apply and removes every occupant on teardown', async () => {
@@ -53,32 +58,34 @@ describe('TianJian browser-brand plugin', () => {
     const before = await bench()
     const fiber = before.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    for (const hole of HOLES) expect(before.slots.entries(hole)).toHaveLength(1)
+    for (const hole of FILLED_HOLES) expect(before.slots.entries(hole)).toHaveLength(1)
     // Mark light/dark switch CSS is injected once at apply time (not per mark).
     expect(document.getElementById(BRAND_SWITCH_STYLE_ID)).not.toBeNull()
+    // Brand color tokens ride the same one-time injection.
+    expect(document.getElementById(BRAND_TOKENS_STYLE_ID)?.textContent).toContain('--tj-accent: #1e4f8f')
 
     before.disposeHoles?.()
-    for (const hole of HOLES) expect(before.slots.entries(hole)).toHaveLength(0)
+    for (const hole of FILLED_HOLES) expect(before.slots.entries(hole)).toHaveLength(0)
     before.declareHoles()
     await Promise.resolve()
-    for (const hole of HOLES) expect(before.slots.entries(hole)).toHaveLength(1)
+    for (const hole of FILLED_HOLES) expect(before.slots.entries(hole)).toHaveLength(1)
 
     await fiber.dispose()
-    for (const hole of HOLES) expect(before.slots.entries(hole)).toHaveLength(0)
+    for (const hole of FILLED_HOLES) expect(before.slots.entries(hole)).toHaveLength(0)
 
     const after = await bench(false)
     await after.ctx.plugin({ inject: [...inject], apply }).await()
-    for (const hole of HOLES) expect(after.slots.entries(hole)).toHaveLength(0)
+    for (const hole of FILLED_HOLES) expect(after.slots.entries(hole)).toHaveLength(0)
     after.declareHoles()
     await Promise.resolve()
-    for (const hole of HOLES) expect(after.slots.entries(hole)).toHaveLength(1)
+    for (const hole of FILLED_HOLES) expect(after.slots.entries(hole)).toHaveLength(1)
   })
 
-  it('leaves the conversation hero on its declaring fallback even in tianjian builds', async () => {
+  it('replaces the conversation hero fallback with the tianjian mark in tianjian builds', async () => {
     vi.stubEnv('DSH_CLIENT_BUILD_PROFILE', 'tianjian')
     const subject = await bench()
     await subject.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(subject.slots.entries(HERO_HOLE)).toHaveLength(0)
+    expect(subject.slots.entries(HERO_HOLE)).toHaveLength(1)
   })
 
   it('renders the tianjian name and mark at the requested size', () => {
@@ -94,8 +101,8 @@ describe('TianJian browser-brand plugin', () => {
     expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('2.5 4 155 155')
     mark.rerender(<TianJianBrandMark size={24} />)
     expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
-    // 16–24px uses the 08 solid asset (viewBox 0 0 160 160).
-    expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 160 160')
+    // 16–24px uses the 08->11 solid asset, which shares the 2.5 4 155 155 canvas.
+    expect(mark.container.querySelector('svg')?.getAttribute('viewBox')).toBe('2.5 4 155 155')
   })
 
   it('sized: 160px 画布 → 请求尺寸；画布缺失 → undefined（纯函数契约）', () => {

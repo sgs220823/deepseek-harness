@@ -167,6 +167,7 @@ export function ConversationContent(props: ConversationContentProps) {
       {hero && heroWorkspaceRow}
       {zone !== undefined && renderSlot('conversation.input.dock', zone)}
       {inputBar}
+      {hero && <p className={css.heroTrust}>{t('hero.trust')}</p>}
     </div>
   )
 

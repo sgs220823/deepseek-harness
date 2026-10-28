@@ -1,12 +1,14 @@
 - banner:
   - button "Open right sidebar"
-- text: Into the Unknown Preview
+- text: Let the evidence speak
+- paragraph: Tell TianJian the case: search, compare, and write it up in one pass.
 - button "Choose workspace": workspace
 - button "Standard mode"
-- textbox "Describe what you want to build, / commands, @ files or sessions":
+- textbox "Describe the case, or paste statements, bank records, or script text…":
   - paragraph: "Use the bash tool to run exactly: echo WEB_E2E_OK. Then reply with the single word DONE and stop."
 - button "Add files or run commands"
 - 'button "Access mode, current: Workspace Write"': Workspace Write
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "Start recording"
 - button "Send message"
+- paragraph: Runs as an isolated instance · Data stays on the intranet

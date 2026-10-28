@@ -15,12 +15,14 @@
 - button "Account menu": More
 - banner:
   - button "Open right sidebar"
-- text: Into the Unknown Preview
+- text: Let the evidence speak
+- paragraph: Tell TianJian the case: search, compare, and write it up in one pass.
 - button "Choose workspace": workspace
 - button "Standard mode"
-- textbox "Describe what you want to build, / commands, @ files or sessions"
+- textbox "Describe the case, or paste statements, bank records, or script text…"
 - button "Add files or run commands"
 - 'button "Access mode, current: Workspace Write"': Workspace Write
 - button "Plan mode on, press to turn off": Plan
 - button "Select model, current DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "Send message" [disabled]
+- paragraph: Runs as an isolated instance · Data stays on the intranet
