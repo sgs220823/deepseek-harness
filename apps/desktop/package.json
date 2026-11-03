@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-desktop",
   "description": "天鉴智能体平台桌面端（TianJian Agent Platform Desktop）",
-  "version": "0.2.2-alpha.3",
+  "version": "0.2.2-alpha.3-tj.1",
   "private": true,
   "license": "MIT",
   "author": {
