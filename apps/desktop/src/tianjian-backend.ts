@@ -1,23 +1,26 @@
 /**
- * 天鉴壳 ↔ 本机 Host 的 RPC 缝（#111/#112，spec #108）：
+ * TianJian shell <-> local Host RPC facade (#111/#112, spec #108):
  *
- * - 以登录窗口分区之外的方式认证 Host：走 Web 启动 URL 的 process-token 交换
- *   （`authenticateWebHost` 已完成），本模块复用同一 `send`（Electron `net.fetch`）
- *   携带 Host cookie 访问 `/api/<ns>/<method>`；
- * - 只暴露桌面端需要的操作：读语言偏好、拉 `desktop-config`（Bearer 会话令牌）、
- *   按契约顺序下发配置（credentials→settings replace→settings update）、登出清凭据；
- * - **只写不读凭据**：令牌写进 `DSH_TIANJIAN_GATEWAY_TOKEN` 引用后，任何读接口都
- *   不返回其值（本模块也不缓存令牌）。
+ * - authenticates against the Host through the Web launch URL's process-token
+ *   exchange (done by `authenticateWebHost`); reuses the same `send` (Electron
+ *   `net.fetch`) to call `/api/<ns>/<method>` with the Host cookie;
+ * - exposes only the desktop-side operations: read the locale preference, fetch
+ *   `desktop-config` (Bearer session token), push the configuration in contract
+ *   order (credentials -> settings replace -> settings update), unset on sign-out;
+ * - credentials are write-only: once the token lands in the
+ *   `DSH_TIANJIAN_GATEWAY_TOKEN` reference, no read API returns its value (and
+ *   this module never caches the token).
  *
- * 配置下发顺序（ADR-0018 §3）不可换：先让实例侧 `llm-pi-ai` 能按 `apiKeyEnv`
- * 解析令牌，再替换 providers，最后改缺省模型。
+ * The push order (ADR-0018 §3) is fixed: the instance's `llm-pi-ai` must be able
+ * to resolve the token via `apiKeyEnv` before the providers land, and the default
+ * model comes last.
  * @module @deepseek-ai/dsh-desktop/tianjian-backend
  */
 
 import { randomUUID } from 'node:crypto'
 import { TIANJIAN_DESKTOP_CONFIG_PATH, TIANJIAN_GATEWAY_TOKEN_REF } from './tianjian-gateway.ts'
 
-/** desktop-config 响应（与网关 `desktop-config.ts` 同形；只校验壳层消费的字段）。 */
+/** desktop-config response (same shape as the gateway's `desktop-config.ts`; only shell-consumed fields are validated). */
 export interface TianjianDesktopConfig {
   readonly version: number
   readonly account: {
@@ -34,36 +37,36 @@ export interface TianjianDesktopConfig {
   }
 }
 
-/** Host 侧设置/凭据/语言操作（本机实例 RPC）。 */
+/** Host-side settings/credential/locale operations (local instance RPC). */
 export interface TianjianBackend {
-  /** @returns 保存的 UI 语言；未设置 = null。 */
+  /** @returns the saved UI language; null when unset. */
   readLocalePreference(): Promise<string | null>
-  /** @returns 当前生效的采集策略（Host 配置实时读取）。 */
+  /** @returns the effective collection policy (read live from the Host). */
   analyticsEnabled(): Promise<boolean>
-  /** @param event - 桌面壳自有的产品事件（凭据不出现在事件里）。 */
+  /** @param event - a shell-owned product event (credentials never appear in events). */
   report(event: unknown): Promise<void>
   /**
-   * 以会话令牌调网关 `desktop-config`。
-   * @param token - `tj_session` 值（Bearer）。
-   * @returns 已校验形状的桌面配置。
+   * Fetch the gateway `desktop-config` with the session token.
+   * @param token - the `tj_session` value (Bearer).
+   * @returns the validated desktop config.
    */
   fetchDesktopConfig(token: string): Promise<TianjianDesktopConfig>
   /**
-   * 按契约顺序下发配置（全部成功才返回）。
-   * @param token - 会话令牌（写进 credentials 引用，供实例 LLM 插件使用）。
-   * @param config - desktop-config 响应。
+   * Push the configuration in contract order (resolves only when every step succeeded).
+   * @param token - session token (written into the credentials reference for the instance's LLM plugin).
+   * @param config - the desktop-config response.
    */
   applyConfiguration(token: string, config: TianjianDesktopConfig): Promise<void>
-  /** 清掉网关令牌引用（登出；不改动已下发的 providers）。 */
+  /** Remove the gateway token reference (sign-out; pushed providers stay untouched). */
   unsetGatewayToken(): Promise<void>
 }
 
-/** JSON 纯对象判定（RPC 信封与响应体形状校验）。 */
+/** Plain JSON-object check (RPC envelope and response-shape validation). */
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** RPC 信封结果里的 `value`（`{ type:'server-response', rpcId, result:{ ok:true, value } }`）。 */
+/** The `value` inside an RPC envelope (`{ type:'server-response', rpcId, result:{ ok:true, value } }`). */
 function rpcValue(envelope: unknown, rpcId: string): unknown {
   if (!record(envelope) || envelope.type !== 'server-response' || envelope.rpcId !== rpcId
     || !record(envelope.result) || envelope.result.ok !== true) {
@@ -72,7 +75,7 @@ function rpcValue(envelope: unknown, rpcId: string): unknown {
   return envelope.result.value
 }
 
-/** 语言偏好从 `settings/describe` 的 locale 命名空间读取。 */
+/** Locale preference read from the `settings/describe` `locale` namespace. */
 function localePreference(namespaces: unknown[]): string | null {
   const locale: unknown = namespaces.find((item: unknown) => record(item) && item.ns === 'locale')
   if (!record(locale) || !record(locale.value)
@@ -82,7 +85,7 @@ function localePreference(namespaces: unknown[]): string | null {
   return locale.value.preference ?? null
 }
 
-/** 校验 desktop-config 响应（版本/账号/凭据字段/缺省模型二元组）。 */
+/** Validate the desktop-config response (version/account fields/default-model pair). */
 function parseDesktopConfig(body: unknown): TianjianDesktopConfig {
   if (!record(body) || body.version !== 1 || !record(body.account) || !record(body.gateway)
     || typeof body.gateway.origin !== 'string' || !record(body.llm) || !record(body.llm.providers)
@@ -97,15 +100,30 @@ function parseDesktopConfig(body: unknown): TianjianDesktopConfig {
     || typeof account.role !== 'string') {
     throw new Error('desktop tianjian: invalid desktop-config account')
   }
-  return body as unknown as TianjianDesktopConfig
+  const llm = body.llm
+  return {
+    version: body.version,
+    account: {
+      id: account.id,
+      username: account.username,
+      display_name: account.display_name as string | null,
+      role: account.role,
+    },
+    gateway: { origin: body.gateway.origin },
+    llm: {
+      providers: llm.providers,
+      defaultModel: { route: llm.defaultModel.route, model: llm.defaultModel.model },
+      ...(typeof llm.warning === 'string' ? { warning: llm.warning } : {}),
+    },
+  }
 }
 
 /**
- * 连接本机 Host 的 Web 认证并返回桌面端操作面。
- * @param authenticatedUrl - Host 启动 URL（`authenticateWebHost` 已交换 process-token）。
- * @param send - Electron `net.fetch`（保留 Host cookie）。
- * @param gatewayOrigin - 构建时内置的网关基址（配置请求只打它）。
- * @returns 语言/配置/登出操作。
+ * Authenticate the local Host over its Web launch URL and return the desktop operations.
+ * @param authenticatedUrl - Host launch URL (`authenticateWebHost` already exchanged the process token).
+ * @param send - Electron `net.fetch` (keeps the Host cookie).
+ * @param gatewayOrigin - build-time gateway origin (config requests go only there).
+ * @returns locale/config/sign-out operations.
  */
 export async function connectTianjianBackend(
   authenticatedUrl: string,
@@ -161,11 +179,11 @@ export async function connectTianjianBackend(
       return parseDesktopConfig(await response.json())
     },
     async applyConfiguration(token, config) {
-      // 1) 令牌写进固定引用（实例 llm-pi-ai 按 apiKeyEnv 解析）。
+      // 1) The token lands in the fixed reference (the instance's llm-pi-ai resolves it via apiKeyEnv).
       await invoke('credentials', 'set', { ref: TIANJIAN_GATEWAY_TOKEN_REF, value: token })
-      // 2) providers 整份替换（只含启用路由；不带 revision = 无条件写）。
+      // 2) Replace the whole providers section (enabled routes only; no revision = unconditional write).
       await invoke('settings', 'replace', { ns: 'llm-pi-ai', section: { providers: config.llm.providers } })
-      // 3) 缺省模型指向管理后台的缺省路由/模型。
+      // 3) Point the default model at the admin-configured route/model.
       await invoke('settings', 'update', {
         ns: 'agent-default-model',
         patch: { provider: config.llm.defaultModel.route, model: config.llm.defaultModel.model },

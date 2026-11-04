@@ -141,6 +141,11 @@ function readSettings(path, accepts) {
  * Require a valid TianJian gateway origin (spec #108 / ADR-0018): packaged builds
  * fail without it — the address is baked into the main bundle and cannot be
  * changed at runtime.
+ *
+ * Deliberately parallel to `apps/desktop/src/tianjian-gateway.ts`
+ * (`resolveTianjianGatewayOrigin`): the packaging scripts are CommonJS-adjacent
+ * `.mjs` and cannot import the bundled TS source, so the same rules live here.
+ * Keep the two validators in lockstep.
  * @param {NodeJS.ProcessEnv} environment Selected release settings.
  * @returns {string} The normalized gateway origin.
  */

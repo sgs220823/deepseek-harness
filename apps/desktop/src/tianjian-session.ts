@@ -1,68 +1,74 @@
 /**
- * 天鉴会话控制器（#111/#112/#113，spec #108）：登录窗口生命周期 + 会话探活 +
- * 配置下发 + 登出。全部副作用经注入依赖，可在主进程单测里钉住状态迁移。
+ * TianJian session controller (#111/#112/#113, spec #108): login-window lifecycle
+ * + session probing + configuration push + sign-out. All side effects go through
+ * injected dependencies, so main-process unit tests can pin the state machine.
  *
- * 状态机：
- * - {@link start}（冷启动）：分区已有令牌 → `probe`：
- *   - `valid` → 重放配置（失败仅记录，不阻挡本地工作）→ 进工作台；
- *   - `invalid` → 清 cookie → 显示登录窗口；
- *   - `unreachable` → **不写配置**直接进工作台（离线可用）；
- *   无令牌 → 显示登录窗口。
- * - 登录窗口轮询该分区 cookie：出现令牌 → `probe`：
- *   - `valid` → 配置下发（三步全成功）→ 关登录窗口 → 进工作台；
- *   - 配置失败 → **留在登录窗口并重试**（下一轮轮询重跑，不进工作台）；
- *   - `invalid` → 清 cookie 继续等（登录页仍可重试）。
- * - {@link signOut}：清 cookie + 清令牌引用 → 隐藏工作台 → 显示登录窗口
- *   （不销毁实例、不改动已下发 providers）。
- * - 登录窗口被用户关闭：停止轮询，由壳层按既有平台语义处理（Windows 退出 /
- *   macOS 销毁主窗），控制器不再产生任何副作用。
+ * State machine:
+ * - {@link start} (cold start): existing partition token -> `probe`:
+ *   - `valid` -> replay the configuration (failure is logged only, local work is
+ *     not blocked) -> enter the workspace;
+ *   - `invalid` -> clear the cookie -> show the login window;
+ *   - `unreachable` -> **no config writes**, enter the workspace (offline usable);
+ *   no token -> show the login window.
+ * - login-window polling: token appears -> `probe`:
+ *   - `valid` -> push the configuration (all three steps) -> close the login
+ *     window -> enter the workspace;
+ *   - push failure -> **stay on the login window and retry** (the next poll reruns
+ *     the whole handoff; no workspace);
+ *   - `invalid` -> clear the cookie and keep waiting (the login page can retry).
+ * - {@link signOut}: clear cookie + unset the token reference -> hide the
+ *   workspace -> show the login window (instance stays alive, pushed providers
+ *   stay untouched).
+ * - the user closes the login window: polling stops and the shell applies its
+ *   existing platform semantics (Windows quits, macOS drops the main window); the
+ *   controller produces no further side effects.
  * @module @deepseek-ai/dsh-desktop/tianjian-session
  */
 
-/** 会话探活结果（`unreachable` = 网关暂时连不上，不是凭据问题）。 */
+/** Session probe outcome (`unreachable` = the gateway is temporarily down, not a credential problem). */
 export type SessionProbeResult = 'valid' | 'invalid' | 'unreachable'
 
-/** 登录窗口的最小句柄（Electron BrowserWindow 的子集）。 */
+/** Minimal login-window handle (subset of Electron's BrowserWindow). */
 export interface TianjianLoginWindow {
   isDestroyed(): boolean
   onClosed(listener: () => void): void
   close(): void
 }
 
-/** 会话控制器依赖（生产 = main.ts 接线；测试 = 假实现）。 */
+/** Controller dependencies (production = main.ts wiring; tests = fakes). */
 export interface TianjianSessionDeps {
-  /** 读取登录分区里的 `tj_session`。 */
+  /** Read the `tj_session` cookie from the login partition. */
   readCookie(): Promise<string | undefined>
-  /** 清除登录分区里的 `tj_session`。 */
+  /** Clear the `tj_session` cookie from the login partition. */
   clearCookie(): Promise<void>
-  /** 用 Bearer 探活（`/api/auth/me` 语义）：200 / 401 / 网络不可达。 */
+  /** Probe the session (Bearer `/api/auth/me` semantics): 200 / 401 / unreachable. */
   probe(token: string): Promise<SessionProbeResult>
-  /** 拉 desktop-config 并按下发顺序写入本机实例（三步全成功才返回）。 */
+  /** Fetch desktop-config and push it in contract order (resolves only when all steps succeeded). */
   prepare(token: string): Promise<void>
-  /** 显示网关登录窗口（加载完成才返回；应用正在退出等无法显示时为 undefined）。 */
+  /** Show the gateway login window (resolves when loaded; undefined when it cannot be shown, e.g. quitting). */
   showLogin(): Promise<TianjianLoginWindow | undefined>
-  /** 关闭登录窗口。 */
+  /** Close the login window. */
   closeLogin(window: TianjianLoginWindow): void
-  /** 登录窗口无法加载时的重试入口（原生提示）。 */
+  /** Retry entry when the login window cannot load (native prompt). */
   showLoginFailure(error: unknown): Promise<'retry' | 'exit'>
-  /** 进入工作台（显示主窗）。 */
+  /** Enter the workspace (show the main window). */
   enterWorkspace(): Promise<void>
-  /** 隐藏工作台（登出；不销毁实例）。 */
+  /** Hide the workspace (sign-out; the instance is not stopped). */
   leaveWorkspace(): Promise<void>
-  /** 清除本机凭据引用（登出）。 */
+  /** Unset the local credential reference (sign-out). */
   unsetCredential(): Promise<void>
-  /** 退出应用（用户取消首次登录）。 */
+  /** Quit the application (user cancels the first login). */
   exit(): void
-  /** 诊断日志（不含令牌）。 */
+  /** Diagnostic log (never contains the token). */
   log?(message: string): void
-  /** 登录窗口轮询间隔（毫秒），缺省 500。 */
+  /** Login-window poll interval (ms), default 500. */
   pollIntervalMs?: number
 }
 
-/** 冷启动/登出后的落点。 */
+/** Where a cold start / sign-out lands. */
 export type SessionStartResult = 'workspace' | 'login' | 'exited'
 
-/** 天鉴会话控制器。 */
+/** TianJian session controller. */
 export class TianjianSessionController {
   private readonly deps: TianjianSessionDeps
   private readonly pollIntervalMs: number
@@ -77,63 +83,64 @@ export class TianjianSessionController {
   }
 
   /**
-   * 冷启动入口：已有令牌 → 探活/重放后进工作台；否则显示登录窗口。
-   * @returns 落点（工作台 / 登录窗口 / 已退出）。
+   * Cold-start entry: existing token -> probe/replay then workspace; otherwise show the login window.
+   * @returns the landing spot (workspace / login window / exited).
    */
   async start(): Promise<SessionStartResult> {
     const token = await this.deps.readCookie().catch((error: unknown) => {
-      this.deps.log?.(`读取会话失败：${messageOf(error)}`)
+      this.deps.log?.(`reading the session cookie failed: ${messageOf(error)}`)
       return undefined
     })
     if (token === undefined) return await this.openLogin()
     const probe = await this.deps.probe(token)
     if (probe === 'unreachable') {
-      // 网关暂时连不上：不写任何配置，直接进工作台（离线办公可用）。
+      // The gateway is temporarily down: no config writes, straight to the workspace (offline work).
       await this.deps.enterWorkspace()
       return 'workspace'
     }
     if (probe === 'invalid') {
+      // The session is already unusable; a failed clear must not block re-login.
       await this.deps.clearCookie().catch(() => undefined)
       return await this.openLogin()
     }
     try {
       await this.deps.prepare(token)
     } catch (error) {
-      // 启动重放失败不阻挡本地工作；下次启动会再重放（配置可能已变）。
-      this.deps.log?.(`启动配置下发失败：${messageOf(error)}`)
+      // A startup replay failure must not block local work; the next start replays again.
+      this.deps.log?.(`startup config push failed: ${messageOf(error)}`)
     }
     await this.deps.enterWorkspace()
     return 'workspace'
   }
 
   /**
-   * 登出：清 cookie + 清凭据引用 → 隐藏工作台 → 显示登录窗口。
-   * 不销毁本机实例、不改动已下发的 providers（下次登录覆盖）。
-   * @returns 落点（登录窗口 / 已退出）。
+   * Sign out: clear cookie + unset the credential reference -> hide the workspace -> show the login window.
+   * The local instance is not stopped and pushed providers are not changed (the next sign-in overwrites them).
+   * @returns the landing spot (login window / exited).
    */
   async signOut(): Promise<SessionStartResult> {
     await this.deps.clearCookie().catch((error: unknown) => {
-      this.deps.log?.(`清除会话失败：${messageOf(error)}`)
+      this.deps.log?.(`clearing the session cookie failed: ${messageOf(error)}`)
     })
     await this.deps.unsetCredential().catch((error: unknown) => {
-      this.deps.log?.(`清除凭据引用失败：${messageOf(error)}`)
+      this.deps.log?.(`unsetting the credential reference failed: ${messageOf(error)}`)
     })
     await this.deps.leaveWorkspace()
     return await this.openLogin()
   }
 
-  /** 主动显示登录窗口（退出确认被取消后回到登录页等场景）。 */
+  /** Show the login window proactively (e.g. a cancelled quit returns to the login page). */
   async showLogin(): Promise<SessionStartResult> {
     return await this.openLogin()
   }
 
-  /** 停止轮询（宿主退出/窗口销毁；幂等）。 */
+  /** Stop polling (host teardown / window destruction; idempotent). */
   dispose(): void {
     this.disposed = true
     this.stopPolling()
   }
 
-  /** 打开登录窗口并开始轮询。 */
+  /** Open the login window and start polling. */
   private async openLogin(): Promise<SessionStartResult> {
     if (this.disposed) return 'login'
     let window: TianjianLoginWindow | undefined
@@ -157,19 +164,19 @@ export class TianjianSessionController {
     return 'login'
   }
 
-  /** 安排下一轮 cookie 轮询（窗口关闭/控制器销毁后不再排）。 */
+  /** Schedule the next cookie poll (nothing is scheduled once the window closed or the controller is disposed). */
   private schedulePoll(delayMs: number): void {
     if (this.disposed || this.windowClosed) return
     this.timer = setTimeout(() => { void this.poll() }, delayMs)
   }
 
-  /** 停止轮询（不清登录窗口；窗口生命周期由壳层管理）。 */
+  /** Stop polling (the login window itself is owned by the shell). */
   private stopPolling(): void {
     if (this.timer !== undefined) clearTimeout(this.timer)
     this.timer = undefined
   }
 
-  /** 轮询一次：令牌出现 → 探活 → 配置下发 → 进工作台。 */
+  /** One poll: token appears -> probe -> push config -> enter the workspace. */
   private async poll(): Promise<void> {
     this.timer = undefined
     if (this.disposed || this.windowClosed) return
@@ -185,25 +192,26 @@ export class TianjianSessionController {
         try {
           await this.deps.prepare(token)
         } catch (error) {
-          // 配置下发失败：留在登录窗口，重试（下一轮轮询重跑整套下发）。
-          this.deps.log?.(`配置下发失败，保持登录窗口重试：${messageOf(error)}`)
+          // Push failure: stay on the login window and retry (the next poll reruns the whole handoff).
+          this.deps.log?.(`config push failed, staying on the login window: ${messageOf(error)}`)
           this.schedulePoll(this.pollIntervalMs)
           return
         }
         this.stopPolling()
         this.loginWindow = undefined
-        this.windowClosed = true
+        // Closing fires the window's own 'closed' listener, which sets `windowClosed`
+        // and clears `loginWindow`; nothing else here flips the flags by hand.
         this.deps.closeLogin(window)
         await this.deps.enterWorkspace()
         return
       }
-      if (probe === 'invalid') await this.deps.clearCookie().catch(() => undefined)
+      if (probe === 'invalid') await this.deps.clearCookie().catch(() => undefined) // Stale session; keep waiting for a fresh login.
     }
     this.schedulePoll(this.pollIntervalMs)
   }
 }
 
-/** 错误消息（日志不含令牌——调用方只传异常）。 */
+/** Error message (logs never contain the token; callers pass the error object only). */
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
