@@ -101,6 +101,11 @@ function parseDesktopConfig(body: unknown): TianjianDesktopConfig {
     throw new Error('desktop tianjian: invalid desktop-config account')
   }
   const llm = body.llm
+  if (!record(llm.providers) || !record(llm.defaultModel)
+    || typeof llm.defaultModel.route !== 'string' || llm.defaultModel.route === ''
+    || typeof llm.defaultModel.model !== 'string' || llm.defaultModel.model === '') {
+    throw new Error('desktop tianjian: invalid desktop-config llm section')
+  }
   return {
     version: body.version,
     account: {
