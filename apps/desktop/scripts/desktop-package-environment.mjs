@@ -15,7 +15,9 @@ import { resolveWindowsPackageSettings } from './windows-package-settings.mjs'
 import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
-const SHARED_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+// TianJian desktop contract (spec #108 / ADR-0018): the gateway origin is a shared
+// release setting carried into the main-bundle define at build time.
+const SHARED_SETTING = /^(?:DSH_TIANJIAN_GATEWAY_URL|DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
 const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY|PACK_CONCURRENCY|COMPRESSION_LEVEL)$/u
 const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
 const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
@@ -133,6 +135,31 @@ function readSettings(path, accepts) {
     if (settings[name]?.trim()) settings[name] = resolve(dirname(path), settings[name].trim())
   }
   return settings
+}
+
+/**
+ * Require a valid TianJian gateway origin (spec #108 / ADR-0018): packaged builds
+ * fail without it — the address is baked into the main bundle and cannot be
+ * changed at runtime.
+ * @param {NodeJS.ProcessEnv} environment Selected release settings.
+ * @returns {string} The normalized gateway origin.
+ */
+export function resolveTianjianGatewayUrl(environment) {
+  const value = environment.DSH_TIANJIAN_GATEWAY_URL?.trim()
+  if (value === undefined || value === '') {
+    throw new Error('desktop package: DSH_TIANJIAN_GATEWAY_URL is required (the gateway origin is baked into the build)')
+  }
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw new Error(`desktop package: DSH_TIANJIAN_GATEWAY_URL is not a valid URL: ${value}`)
+  }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:')
+    || url.pathname !== '/' || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') {
+    throw new Error(`desktop package: DSH_TIANJIAN_GATEWAY_URL must be a bare gateway origin (protocol + host + port): ${value}`)
+  }
+  return url.origin
 }
 
 function requireReadableFile(environment, name) {

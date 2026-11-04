@@ -1,8 +1,7 @@
 import { defineConfig } from 'tsdown'
-import { build } from 'vite'
+import { copyFile, mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { readFileSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
 import { repositoryClientBuildEnvironment, resolveClientBuildEnvironment } from '../../scripts/client-build-environment.ts'
 import { packagedImportsPlugin } from './scripts/desktop-bundle-imports.mjs'
 
@@ -29,8 +28,17 @@ const clientEnvironment = resolveClientBuildEnvironment(process.env.DSH_CLIENT_V
 const clientVersion = clientEnvironment.DSH_CLIENT_VERSION
 if (clientVersion === undefined) throw new Error('desktop build: the client environment carries no DSH_CLIENT_VERSION')
 
-/** Inline the one public build value the Node entry reads; every other variable stays a runtime lookup. */
-const clientVersionDefine = { 'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion) }
+/** Inline the two public build values the Node entry reads; every other variable stays a runtime lookup. */
+const clientVersionDefine = {
+  'process.env.DSH_CLIENT_VERSION': JSON.stringify(clientVersion),
+  // TianJian desktop contract (spec #108 / ADR-0018): the gateway origin is baked
+  // into the main bundle. Packaged builds without it fail in the packaging
+  // environment validation; development falls back to the local dev gateway.
+  'process.env.DSH_TIANJIAN_GATEWAY_URL': JSON.stringify(process.env.DSH_TIANJIAN_GATEWAY_URL?.trim() ?? ''),
+}
+
+/** Dialog/brand assets copied next to the main bundle (update dialogs read them through the shell protocol). */
+const SHELL_ASSET_FILES = ['design-platform.css', 'brand-font.css', 'montserrat-regular.woff2', 'montserrat-light.woff2', 'montserrat-medium.woff2', 'Montserrat-OFL.txt'] as const
 
 export default defineConfig([
   {
@@ -57,35 +65,13 @@ export default defineConfig([
     plugins: [packagedImportsPlugin(mainProcessImports)],
     define: clientVersionDefine,
     onSuccess: async () => {
-      await build({
-        configFile: false,
-        plugins: [{
-          name: 'desktop-shell-assets',
-          async generateBundle() {
-            for (const name of ['design-platform.css', 'brand-font.css', 'montserrat-regular.woff2', 'montserrat-light.woff2', 'montserrat-medium.woff2', 'Montserrat-OFL.txt']) {
-              this.emitFile({
-                type: 'asset',
-                fileName: name,
-                source: await readFile(new URL(`../../packages/client/ui-theme/src/styles/${name}`, import.meta.url)),
-              })
-            }
-          },
-        }],
-        root: fileURLToPath(new URL('.', import.meta.url)),
-        esbuild: { jsx: 'automatic' },
-        define: { 'process.env.NODE_ENV': JSON.stringify('production') },
-        build: {
-          outDir: 'lib/welcome',
-          emptyOutDir: true,
-          lib: {
-            entry: 'src/client/welcome.tsx',
-            formats: ['iife'],
-            name: 'DesktopWelcome',
-            fileName: () => 'welcome.js',
-            cssFileName: 'welcome',
-          },
-        },
-      })
+      // The official welcome renderer is gone (spec #108); only the shell dialog
+      // assets are copied next to the main bundle now.
+      await mkdir(new URL('./lib/welcome/', import.meta.url), { recursive: true })
+      await Promise.all(SHELL_ASSET_FILES.map(name => copyFile(
+        new URL(`../../packages/client/ui-theme/src/styles/${name}`, import.meta.url),
+        new URL(`./lib/welcome/${name}`, import.meta.url),
+      )))
     },
     outDir: 'lib',
     format: ['esm'],
@@ -96,7 +82,7 @@ export default defineConfig([
     clean: false,
     deps: { neverBundle: ['electron'] },
   },
-  ...(['preload-app', 'preload-welcome', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog'] as const).map(name => ({
+  ...(['preload-app', 'preload-platform-account', 'preload-mandatory', 'preload-update-dialog'] as const).map(name => ({
     // Sandboxed Electron preloads run as CommonJS even though the application package is ESM.
     entry: { [name]: `lib/types/${name}.js` },
     plugins: [packagedImportsPlugin(preloadImports)],

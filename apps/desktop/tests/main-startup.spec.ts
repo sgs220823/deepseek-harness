@@ -201,6 +201,32 @@ const harness = await vi.hoisted(async () => {
   let analyticsEnabled = true
   let analyticsEnabledListener: ((enabled: boolean) => void) | undefined
   const analytics = vi.fn(async (_event: unknown) => {})
+  const loginSession = {
+    cookies: {
+      get: vi.fn(async () => [{ name: 'tj_session', value: 'tianjian-test-token' }]),
+      remove: vi.fn(async () => {}),
+    },
+  }
+  const netFetch = vi.fn(async (input: string | URL | Request): Promise<Response> => {
+    const url = String(input)
+    if (url.endsWith('/api/auth/me')) return Response.json({ user: { id: 1, username: 'admin', role: 'super-admin', disabled: false } })
+    if (url.endsWith('/api/auth/desktop-config')) {
+      return Response.json({
+        version: 1,
+        account: { id: 1, username: 'admin', display_name: null, role: 'super-admin' },
+        gateway: { origin: 'http://gateway.internal.test:8080' },
+        llm: { providers: {}, defaultModel: { route: 'tianjian', model: 'deepseek-v4-flash' } },
+      })
+    }
+    return Response.json({})
+  })
+  const readLocalePreference = vi.fn(async (): Promise<string | null> => null)
+  const fetchDesktopConfig = vi.fn(async () => await (async () => {
+    const response = await netFetch('http://gateway.internal.test:8080/api/auth/desktop-config')
+    return await response.json() as never
+  })())
+  const applyConfiguration = vi.fn(async () => {})
+  const unsetGatewayToken = vi.fn(async () => {})
   const nativeTheme = { themeSource: 'system', shouldUseDarkColors: false }
   const trays: FakeTray[] = []
   class FakeTray extends EventEmitter {
@@ -214,6 +240,7 @@ const harness = await vi.hoisted(async () => {
   return {
     failWindow(error: Error) { windowFailure = error },
     windows, views, hosts, handlers, app, FakeWindow, FakeView, FakeHost, powerMonitor, nativeTheme, analytics,
+    loginSession, netFetch, readLocalePreference, fetchDesktopConfig, applyConfiguration, unsetGatewayToken,
     trays, FakeTray, backgroundNotice, shellDialog,
     menu, popup, socketHeaders: vi.fn(), loginShell, readLoginShell, updateCheck, updateDownload, updateInstall,
     platformDispose,
@@ -259,7 +286,23 @@ const harness = await vi.hoisted(async () => {
     set pluginsEnabled(value: boolean) { pluginsEnabled = value },
     set closeWindowsOnQuit(value: boolean) { closeWindowsOnQuit = value },
     reset() {
-      accountListener = undefined
+      loginSession.cookies.get.mockReset().mockResolvedValue([{ name: 'tj_session', value: 'tianjian-test-token' }])
+      loginSession.cookies.remove.mockReset().mockResolvedValue(undefined)
+      netFetch.mockReset().mockImplementation(async (input: string | URL | Request): Promise<Response> => {
+        const url = String(input)
+        if (url.endsWith('/api/auth/me')) return Response.json({ user: { id: 1, username: 'admin', role: 'super-admin', disabled: false } })
+        if (url.endsWith('/api/auth/desktop-config')) {
+          return Response.json(TIANJIAN_TEST_CONFIG)
+        }
+        return Response.json({})
+      })
+      readLocalePreference.mockReset().mockResolvedValue(null)
+      fetchDesktopConfig.mockReset().mockImplementation(async () => {
+        const response = await netFetch('http://gateway.internal.test:8080/api/auth/desktop-config')
+        return await response.json() as never
+      })
+      applyConfiguration.mockReset().mockResolvedValue(undefined)
+      unsetGatewayToken.mockReset().mockResolvedValue(undefined)
       windows.length = 0
       views.length = 0; hosts.length = 0; handlers.clear(); app.removeAllListeners()
       trays.length = 0
@@ -290,6 +333,13 @@ const harness = await vi.hoisted(async () => {
   }
 })
 
+const TIANJIAN_TEST_CONFIG = {
+  version: 1,
+  account: { id: 1, username: 'admin', display_name: null, role: 'super-admin' },
+  gateway: { origin: 'http://gateway.internal.test:8080' },
+  llm: { providers: {}, defaultModel: { route: 'tianjian', model: 'deepseek-v4-flash' } },
+} as const
+
 const testAuth = vi.hoisted(() => ({ login: vi.fn<() => Promise<'returned' | 'cancelled' | 'failed'>>(),
   focus: vi.fn(), dispose: vi.fn(async () => {}) }))
 vi.mock('../src/policy-test-auth.ts', () => ({ DesktopPolicyTestAuth: class {
@@ -306,7 +356,7 @@ vi.mock('electron', () => ({
   dialog: harness.dialog,
   shell: { openExternal: harness.openExternal },
   nativeTheme: harness.nativeTheme,
-  net: { fetch: vi.fn() },
+  net: { fetch: harness.netFetch },
   ipcMain: {
     on: harness.ipcOn,
     handle: (channel: string, handler: InvokeHandler) => {
@@ -316,10 +366,13 @@ vi.mock('electron', () => ({
     removeHandler: (channel: string) => { harness.handlers.delete(channel) },
   },
   Menu: { setApplicationMenu: harness.menu.setApplicationMenu, buildFromTemplate: harness.menu },
-  session: { defaultSession: {
-    on: vi.fn(),
-    setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: harness.socketHeaders },
-  } },
+  session: {
+    defaultSession: {
+      on: vi.fn(),
+      setPermissionCheckHandler: vi.fn(), setPermissionRequestHandler: vi.fn(), webRequest: { onBeforeSendHeaders: harness.socketHeaders },
+    },
+    fromPartition: vi.fn(() => harness.loginSession),
+  },
   protocol: { registerSchemesAsPrivileged: vi.fn(), handle: harness.protocolHandle },
   powerMonitor: harness.powerMonitor,
   Tray: harness.FakeTray,
@@ -388,16 +441,17 @@ vi.mock('../src/platform-view.ts', async importOriginal => ({
     dispose(): Promise<void> { return harness.platformDispose() }
   },
 }))
-vi.mock('../src/welcome-backend.ts', () => ({
-  connectDesktopWelcome: async () => ({
+vi.mock('../src/tianjian-backend.ts', () => ({
+  connectTianjianBackend: async () => ({
     analyticsEnabled: async () => harness.analyticsEnabled,
     report: harness.analytics,
-    readLocalePreference: async () => null,
-    read: async (): Promise<unknown> => (await harness.hosts.at(-1)!.fetch()).json() as Promise<unknown>,
-    save: async () => ({ ok: true }),
-    account: { watch: harness.watchAccount, state: async () => ({ status: 'signed-out', attempt: null }) },
+    readLocalePreference: harness.readLocalePreference,
+    fetchDesktopConfig: harness.fetchDesktopConfig, applyConfiguration: harness.applyConfiguration,
+    unsetGatewayToken: harness.unsetGatewayToken,
   }),
 }))
+
+vi.mock('../src/tianjian-profile.ts', () => ({ seedTianjianProfilePatch: vi.fn(() => false) }))
 
 function configureTestAuthPopup(allow: boolean): void {
   const directory = join(harness.app.getPath('userData'), 'desktop')
@@ -453,6 +507,7 @@ beforeEach(() => {
   vi.stubEnv('DSH_DESKTOP_MANDATORY_UPDATE_CONFIG', undefined)
   vi.stubEnv('DSH_DESKTOP_UPDATE_JOURNAL_DIR', undefined)
   vi.stubEnv('DSH_CLIENT_VERSION', '1.2.3')
+  vi.stubEnv('DSH_TIANJIAN_GATEWAY_URL', 'http://gateway.internal.test:8080')
   harness.analyticsEnabled = true
 })
 
@@ -567,6 +622,7 @@ describe('desktop main startup', () => {
       ...platform === 'linux' ? [] : [messages.cliCommandMenu],
       'separator', ...packaged ? [] : [messages.reloadPageMenu, messages.restartAppHostMenu],
       messages.toggleDevToolsMenu, 'separator',
+      messages.signOutMenu,
       ...platform === 'darwin' ? [messages.hideApplication, messages.hideOtherApplications, messages.showAllApplications, 'separator'] : [],
       'quit',
     ])
@@ -1069,7 +1125,7 @@ describe('desktop main startup', () => {
     expect(() => handler(event, 'application', NaN, 34)).toThrow('invalid popup request')
     const application = handler(event, 'application', 48, 34)
     expect(harness.menu.buildFromTemplate.mock.lastCall![0].map(item => item.label ?? item.type)).toEqual([
-      '关于天鉴智能体平台', 'separator', '检查更新…', '管理 dsh 命令…', 'separator', zh.toggleDevToolsMenu, 'separator', '退出',
+      '关于天鉴智能体平台', 'separator', '检查更新…', '管理 dsh 命令…', 'separator', zh.toggleDevToolsMenu, 'separator', zh.signOutMenu, '退出',
     ])
     expect(harness.popup.mock.lastCall![0]).toMatchObject({ window, x: 48, y: 34 })
     expect(harness.popup.mock.lastCall![0].callback).toBeTypeOf('function')
@@ -1106,8 +1162,8 @@ describe('desktop main startup', () => {
       : ['Application', 'editMenu'])
     const application = template[0]!.submenu as MenuItemConstructorOptions[]
     expect(application.filter(item => item.visible !== false).map(describeItem)).toEqual(platform === 'darwin'
-      ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
-      : ['about', 'separator', en.checkUpdatesMenu, 'separator', 'toggleDevTools', 'separator', 'quit'])
+      ? ['about', 'separator', en.checkUpdatesMenu, en.cliCommandMenu, 'separator', 'toggleDevTools', 'separator', en.signOutMenu, 'hide', 'hideOthers', 'unhide', 'separator', 'quit']
+      : ['about', 'separator', en.checkUpdatesMenu, 'separator', 'toggleDevTools', 'separator', en.signOutMenu, 'quit'])
     expect(harness.menu.setApplicationMenu).toHaveBeenCalledOnce()
   })
 
@@ -1156,13 +1212,11 @@ describe('desktop main startup', () => {
     expect(callback).toHaveBeenLastCalledWith({})
   })
 
-  it('shares login key discovery with onboarding and rejects foreign renderers', async () => {
+  it('reports no official API-key onboarding entry and rejects foreign renderers (#108)', async () => {
     await readyForUpdate()
     const window = harness.windows[0]!
     const handler = harness.handlers.get(DESKTOP_IPC.onboardingApiKey)!
     const event = { sender: window.webContents, senderFrame: window.webContents.mainFrame }
-    await vi.waitFor(async () => { expect(await handler(event)).toBe(true) })
-    harness.hosts.at(-1)!.fetch.mockResolvedValueOnce(Response.json({ hasApiKey: false }))
     await expect(handler(event)).resolves.toBe(false)
     await expect(handler({ ...event, sender: {} })).rejects.toThrow()
   })
@@ -2613,21 +2667,21 @@ describe('desktop main startup', () => {
     expect(harness.hosts).toHaveLength(1)
   })
 
-  it('keeps recovery visible when the backend fails during the welcome preference read', async () => {
-    const preferences = Promise.withResolvers<Response>()
+  it('keeps recovery visible when the backend fails during the locale preference read', async () => {
+    const preferences = Promise.withResolvers<string | null>()
     await import('../src/main.ts')
     await harness.preparing.promise
     harness.prepared.resolve()
     await harness.hostStarted.promise
     const host = harness.hosts[0]!
-    host.fetch.mockReturnValueOnce(preferences.promise)
+    harness.readLocalePreference.mockReturnValueOnce(preferences.promise)
     const startup = expect(Promise.resolve(invoke(DESKTOP_IPC.boot))).rejects.toThrow('Desktop Host is unavailable')
     host.ready.resolve()
-    await vi.waitFor(() => { expect(host.fetch).toHaveBeenCalledOnce() })
+    await vi.waitFor(() => { expect(harness.readLocalePreference).toHaveBeenCalledOnce() })
     host.exited.resolve()
     host.onFailure!(new Error('backend exited during startup preferences'))
     await harness.dialogShown.promise
-    preferences.resolve(Response.json({ hasApiKey: true, localePreference: null }))
+    preferences.resolve(null)
     await startup
     expect(harness.windows[0]!.urls).not.toContain('http://127.0.0.1:3080/?token=test')
     const failureDialog = harness.dialog.showMessageBox.mock.calls[0]![0] as { detail: string }
@@ -2654,42 +2708,6 @@ describe('desktop main startup', () => {
     expect(window.urls).toEqual(['dsh-app://app/'])
     expect(harness.windows).toHaveLength(1)
   })
-})
-
-it.each(['failed', 'expired'] as const)('focuses DSH once when browser authorization becomes %s', async (phase) => {
-  await import('../src/main.ts')
-  await harness.preparing.promise
-  harness.prepared.resolve()
-  await harness.hostStarted.promise
-  harness.hosts[0]!.ready.resolve()
-  await Promise.resolve(invoke(DESKTOP_IPC.boot))
-  const window = harness.windows[0]!
-  window.focus.mockClear()
-  const state: AccountView = {
-    status: 'signed-out', links: { usageUrl: 'https://platform.deepseek.com/usage', topUpUrl: 'https://platform.deepseek.com/top_up' },
-    attempt: { id: 'test-failed-attempt' as NonNullable<AccountView['attempt']>['id'], phase },
-  }
-  harness.publishAccount(state)
-  harness.publishAccount(state)
-  expect(window.focus).toHaveBeenCalledTimes(1)
-})
-
-it.each([['light', false], ['dark', true]] as const)('opens Platform authorization in the effective %s palette', async (theme, shouldUseDarkColors) => {
-  await import('../src/main.ts')
-  await harness.preparing.promise
-  harness.prepared.resolve()
-  await harness.hostStarted.promise
-  harness.hosts[0]!.ready.resolve()
-  await Promise.resolve(invoke(DESKTOP_IPC.boot))
-  harness.nativeTheme.shouldUseDarkColors = shouldUseDarkColors
-  const state: AccountView = {
-    status: 'signed-out', links: { usageUrl: 'https://platform.deepseek.com/usage', topUpUrl: 'https://platform.deepseek.com/top_up' },
-    attempt: { id: 'test-theme-attempt' as NonNullable<AccountView['attempt']>['id'], phase: 'waiting-browser',
-      authorizeUrl: 'https://platform.deepseek.com/dsh/authorize?state=state-1' },
-  }
-  harness.publishAccount(state)
-  harness.publishAccount(state)
-  expect(harness.openExternal).toHaveBeenCalledExactlyOnceWith(`https://platform.deepseek.com/dsh/authorize?state=state-1&theme=${theme}`)
 })
 
 it('disables native product events for a disabled Desktop launch', async () => {

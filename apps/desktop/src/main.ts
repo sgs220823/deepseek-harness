@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url'
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
   ipcMain,
   Menu,
@@ -44,9 +43,15 @@ import { DesktopFatalRecovery } from './fatal-recovery.ts'
 import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashReportSource } from './crash-report.ts'
 import { OperationJournal } from './operation-journal.ts'
 import { runOperationReportJob, type OperationReportJobResult } from './operation-report-job.ts'
-import { openWelcomeWindow } from './welcome-window.ts'
-import { WELCOME_IPC, needsWelcome, type WelcomeNotice } from './welcome-api.ts'
-import { connectDesktopWelcome, type DesktopWelcomeBackend } from './welcome-backend.ts'
+import { connectTianjianBackend, type TianjianBackend } from './tianjian-backend.ts'
+import { resolveTianjianGatewayOrigin } from './tianjian-gateway.ts'
+import {
+  clearTianjianSessionToken,
+  openTianjianLoginWindow,
+  readTianjianSessionToken,
+} from './tianjian-login-window.ts'
+import { seedTianjianProfilePatch } from './tianjian-profile.ts'
+import { TianjianSessionController } from './tianjian-session.ts'
 import { DesktopUpdateJournal } from './update-journal.ts'
 import { DesktopUpdatePreparationError } from './update-error.ts'
 import { DesktopUpdateSchedule, resolveDesktopUpdateScheduleConfig } from './update-schedule.ts'
@@ -242,20 +247,6 @@ function chromeFallbackFill(): string {
   return nativeTheme.shouldUseDarkColors ? '#1b1b1c' : '#f9fafb'
 }
 
-/**
- * Add the effective Desktop palette to a Platform authorization URL so the
- * login page opens in the application's theme. `system` resolves through
- * `nativeTheme.shouldUseDarkColors`, which follows the theme source the
- * application preload publishes.
- * @param authorizeUrl - validated Platform authorization URL.
- * @returns the authorization URL carrying `theme=light` or `theme=dark`.
- */
-function platformLoginUrl(authorizeUrl: string): string {
-  const url = new URL(authorizeUrl)
-  url.searchParams.set('theme', nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
-  return url.href
-}
-
 function createWindow(preload: string, show = false, primary = false): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
@@ -378,6 +369,11 @@ async function main(): Promise<void> {
     : join(process.resourcesPath, 'runtime', 'primary-runtime')
   const activeProject = paths.profile
   const manager = new DesktopProjectManager(paths, resources)
+  // TianJian desktop contract (spec #108 / ADR-0018): the gateway origin is baked in
+  // at build time (packaged builds fail fast without it; dev falls back to localhost)
+  // and the desktop profile disables the official LLM/account rows on first creation.
+  const gatewayOrigin = resolveTianjianGatewayOrigin(process.env.DSH_TIANJIAN_GATEWAY_URL, app.isPackaged)
+  seedTianjianProfilePatch(paths.profile)
   // Dock and Finder launches inherit only launchd's environment; every Host shares one login-shell read.
   const loginShellRead = new AbortController()
   // The probe runs in its own process group, which outlives Desktop unless the read is aborted.
@@ -394,7 +390,6 @@ async function main(): Promise<void> {
   let startup: Promise<void> | undefined
   let workspaceRecovery: Promise<void> | undefined
   let mainWindow: BrowserWindow | undefined
-  let welcomeWindow: BrowserWindow | undefined
   const installFileDrag = (): (() => Promise<void>) => installDesktopFileDrag(
     event => assertProductSender(event),
     (address, signal) => {
@@ -439,7 +434,7 @@ async function main(): Promise<void> {
   const isQuitting = (): boolean => quitting
   const currentMainWindow = (): BrowserWindow | undefined => mainWindow
   const ordinaryDialogs = new Set<AbortController>()
-  const currentDialogWindow = (): BrowserWindow | undefined => welcomeWindow ?? mainWindow
+  const currentDialogWindow = (): BrowserWindow | undefined => loginWindow ?? mainWindow
   const updateOverlays = new DesktopUpdateOverlays()
   const updateDialog = new DesktopUpdateDialog(fileURLToPath(new URL('./preload-update-dialog.cjs', import.meta.url)), () => locale, updateOverlays)
   const isMandatory = (): boolean => mandatoryPolicy?.state.blocking === true
@@ -475,20 +470,19 @@ async function main(): Promise<void> {
   let hostCookie: string | undefined
   const browserGuests = new DesktopBrowserGuests(() => hostUrl)
   let injections: readonly unknown[] = []
-  let welcomeBackend: DesktopWelcomeBackend | undefined
+  // TianJian session wiring (spec #108): the build-time gateway origin, the Host RPC
+  // facade, and the login-window session controller replace the official account flow.
+  let tianjianBackend: TianjianBackend | undefined
+  let sessionController: TianjianSessionController | undefined
+  let loginWindow: BrowserWindow | undefined
   let reportedLaunch = false
   let analyticsEnabled = false
   const track = async <K extends keyof ProductEventMap>(eventName: K, attributes: ProductEventMap[K]): Promise<void> => {
     const event = { eventName, attributes, timestamp: Date.now() } as ProductEvent
     try {
-      if (analyticsEnabled) await welcomeBackend?.report(event)
+      if (analyticsEnabled) await tianjianBackend?.report(event)
     } catch (_error) { /* Analytics cannot interrupt native actions. */ }
   }
-  let stopAccount: (() => void) | undefined
-  let openedAttempt: string | undefined
-  let returnedAttempt: string | undefined
-  let pendingWelcomeNotice: WelcomeNotice | undefined
-  let previousAccountStatus: string | undefined
   const assertProductSender = (event: IpcMainInvokeEvent): BrowserWindow => {
     assertDesktopSender(event, ['app'])
     if (mainWindow === undefined || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents
@@ -533,51 +527,52 @@ async function main(): Promise<void> {
         hostUrl = ready.url
         if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')
         injections = ready.injections
-        welcomeBackend = await connectDesktopWelcome(ready.url, (input, init) => net.fetch(input, init), async () => (await session.defaultSession.cookies.get({ url: ready.url })).map(cookie => `${cookie.name}=${cookie.value}`).join('; '))
-        analyticsEnabled = await welcomeBackend.analyticsEnabled().catch(() => false)
+        tianjianBackend = await connectTianjianBackend(ready.url, (input, init) => net.fetch(input, init), gatewayOrigin)
+        analyticsEnabled = await tianjianBackend.analyticsEnabled().catch(() => false)
         if (!reportedLaunch) { reportedLaunch = true; void track('desktop_app_launch', {}) }
-        stopAccount?.()
-        const accountBackend = welcomeBackend.account
-        stopAccount = accountBackend.watch((state) => {
-          if (quitting) return
-          if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.webContents.send(WELCOME_IPC.state, state)
-          const attempt = state.attempt
-          if (attempt?.phase === 'waiting-browser' && attempt.authorizeUrl !== undefined && openedAttempt !== attempt.id) {
-            openedAttempt = attempt.id
-            void shell.openExternal(platformLoginUrl(attempt.authorizeUrl)).catch(() => undefined)
-          }
-          if ((attempt?.phase === 'failed' || attempt?.phase === 'expired') && returnedAttempt !== attempt.id) {
-            returnedAttempt = attempt.id
-            focusPrimaryWindow()
-          }
-          if (state.status === 'credential-stored' && attempt?.phase === 'succeeded' && welcomeWindow !== undefined) void enterWorkspace({ activate: false }).catch(() => undefined)
-          if (previousAccountStatus === 'credential-stored' && state.status === 'signed-out') {
-            void readWelcomeState().then(async (value) => {
-              if (needsWelcome(value) && !quitting) {
-                enteredWorkspace = false
-                await showWelcome()
-                if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.webContents.send(WELCOME_IPC.state, state)
-              }
-              return undefined
-            }).catch(() => undefined)
-          }
-          previousAccountStatus = state.status
-        }, () => {
-          // The stream reconnects; a transport failure does not change account state.
-        }, () => {
-          void readWelcomeState().then(async (value) => {
-            if (!needsWelcome(value) || quitting) return
-            pendingWelcomeNotice = 'session-expired'
+        sessionController = new TianjianSessionController({
+          readCookie: async () => await readTianjianSessionToken(undefined, gatewayOrigin),
+          clearCookie: async () => { await clearTianjianSessionToken(undefined, gatewayOrigin) },
+          probe: async (token) => {
+            try {
+              const me = await net.fetch(`${gatewayOrigin}/api/auth/me`, {
+                headers: { authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10_000),
+              })
+              return me.ok ? 'valid' : me.status === 401 ? 'invalid' : 'unreachable'
+            } catch {
+              return 'unreachable'
+            }
+          },
+          prepare: async (token) => {
+            const backend = tianjianBackend
+            if (backend === undefined) throw new Error('desktop tianjian: backend unavailable')
+            const config = await backend.fetchDesktopConfig(token)
+            await backend.applyConfiguration(token, config)
+          },
+          showLogin: async () => {
+            const window = await showTianjianLogin()
+            return window === undefined ? undefined : {
+              isDestroyed: () => window.isDestroyed(),
+              onClosed: (listener: () => void) => { window.once('closed', listener) },
+              close: () => { window.close() },
+            }
+          },
+          closeLogin: (window) => { window.close() },
+          showLoginFailure: async error => await reportLoginUnavailable(error),
+          enterWorkspace,
+          leaveWorkspace: async () => {
             enteredWorkspace = false
-            await showWelcome()
-            const state = await accountBackend.state()
-            if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.webContents.send(WELCOME_IPC.state, state)
-          }).catch(() => undefined)
-        }, (enabled) => { analyticsEnabled = enabled })
+            if (mainWindow !== undefined && !mainWindow.isDestroyed()) hideMainWindow(mainWindow)
+          },
+          unsetCredential: async () => { await tianjianBackend?.unsetGatewayToken() },
+          exit: () => { app.quit() },
+          log: (message) => { console.warn(`desktop tianjian session: ${message}`) },
+        })
       },
       stop: async () => {
         analyticsEnabled = false
-        stopAccount?.()
+        sessionController?.dispose()
+        sessionController = undefined
         try { await host.stop(requireCleanStop) }
         catch (error) {
           if (!requireCleanStop || !(error instanceof DesktopHostUncleanExitError)) throw error
@@ -649,8 +644,8 @@ async function main(): Promise<void> {
   }
 
   const readWelcomeState = async () => {
-    if (backend.host === undefined || welcomeBackend === undefined) throw new Error('desktop welcome: backend unavailable')
-    return welcomeBackend.read()
+    if (backend.host === undefined || tianjianBackend === undefined) throw new Error('desktop tianjian: backend unavailable')
+    return tianjianBackend.readLocalePreference()
   }
   stopForRecovery = async () => {
     const reports = stopOperationReports()
@@ -748,7 +743,6 @@ async function main(): Promise<void> {
     // A confirmation on a hidden window would go unseen, so it waits for the next show; the mandatory
     // flow keeps its own taskbar and Dock attention instead.
     if (!isMandatory()) await windowShown()
-    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- A quit can begin while the show is awaited.
     if (quitting) return state
     return updates.install(version)
   }
@@ -852,8 +846,8 @@ async function main(): Promise<void> {
       || new URL(event.senderFrame.url).origin !== new URL(applicationUrl).origin) {
       throw new Error('desktop welcome: rejected locale request from an unowned frame')
     }
-    if (welcomeBackend === undefined) throw new Error('desktop welcome: backend unavailable')
-    return { languages: systemLanguages, preference: await welcomeBackend.readLocalePreference() }
+    if (tianjianBackend === undefined) throw new Error('desktop tianjian: backend unavailable')
+    return { languages: systemLanguages, preference: await tianjianBackend.readLocalePreference() }
   })
   ipcMain.on(DESKTOP_IPC.localeChanged, (event, next: unknown) => {
     const window = mainWindow
@@ -877,7 +871,9 @@ async function main(): Promise<void> {
   })
   ipcMain.handle(DESKTOP_IPC.onboardingApiKey, async (event) => {
     assertProductSender(event)
-    return (await readWelcomeState()).hasApiKey
+    // The official DeepSeek provider is disabled in the TianJian desktop profile
+    // (spec #108): the workspace has no official API-key onboarding entry.
+    return false
   })
   ipcMain.on(DESKTOP_IPC.onboardingActive, (event, active: unknown) => {
     const window = mainWindow
@@ -1071,6 +1067,14 @@ async function main(): Promise<void> {
     ] : [],
     { role: 'toggleDevTools', label: currentDesktopLocale().messages.toggleDevToolsMenu },
     { type: 'separator' },
+    // TianJian session (spec #108): explicit sign-out supports shared machines; it
+    // clears the gateway session cookie and credential reference, then shows the
+    // login window again without touching the local instance.
+    { label: currentDesktopLocale().messages.signOutMenu, click: () => {
+      if (sessionController === undefined) return
+      enteredWorkspace = false
+      void sessionController.signOut().catch((error: unknown) => { console.error(error) })
+    } },
     ...hideCommands,
     { role: 'quit', ...(darwin ? { label: currentDesktopLocale().messages.quitApplication }
       : process.platform === 'win32' ? { label: currentDesktopLocale().messages.exitApplication } : {}) },
@@ -1224,11 +1228,11 @@ async function main(): Promise<void> {
     if (activate) window.show()
     else window.showInactive()
     enteredWorkspace = true
-    if (welcomeWindow !== undefined) {
-      welcomeWindow.close()
+    if (loginWindow !== undefined && !loginWindow.isDestroyed()) {
+      loginWindow.close()
       window.webContents.send(DESKTOP_IPC.enterWorkspace)
     }
-    welcomeWindow = undefined
+    loginWindow = undefined
     if (raiseAfterUpdate) {
       raiseAfterUpdate = false
       window.moveTop()
@@ -1238,80 +1242,66 @@ async function main(): Promise<void> {
       window.webContents.openDevTools({ mode: 'detach' })
     }
   }
-  let openingWelcome: Promise<void> | undefined
-  const showWelcome = (): Promise<void> => {
-    if (quitting) return Promise.resolve()
-    if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) {
-      if (!welcomeWindow.isVisible()) void track('auth_page_view', {})
-      welcomeWindow.show()
-      welcomeWindow.focus()
-      return Promise.resolve()
+  let openingLogin: Promise<BrowserWindow | undefined> | undefined
+  /**
+   * Show the gateway login window (spec #108): an independent sandboxed window over
+   * the build-time gateway origin, with the existing welcome-window platform semantics
+   * (Windows quit on close, macOS drops the unused main window).
+   * @returns the visible login window, or undefined when quitting/superseded.
+   */
+  const showTianjianLogin = (): Promise<BrowserWindow | undefined> => {
+    if (quitting) return Promise.resolve(undefined)
+    if (loginWindow !== undefined && !loginWindow.isDestroyed()) {
+      loginWindow.show()
+      loginWindow.focus()
+      return Promise.resolve(loginWindow)
     }
-    openingWelcome ??= (async () => {
-      welcomeWindow = await openWelcomeWindow(locale, {
-        analytics: track,
-        analyticsEnabled: () => Promise.resolve(analyticsEnabled),
-        takeNotice: () => {
-          const notice = pendingWelcomeNotice
-          pendingWelcomeNotice = undefined
-          return Promise.resolve(notice)
-        },
-        startSignIn: async () => {
-          if (welcomeBackend === undefined) throw new Error('desktop welcome: backend unavailable')
-          return welcomeBackend.account.start(desktopClientMetadata(locale.id))
-        },
-        cancelSignIn: async (id) => {
-          if (welcomeBackend === undefined) throw new Error('desktop welcome: backend unavailable')
-          return welcomeBackend.account.cancel(id)
-        },
-        copySignInLink: async (id) => {
-          const state = await welcomeBackend?.account.state()
-          if (state?.attempt?.id !== id || state.attempt.phase !== 'waiting-browser' || state.attempt.authorizeUrl === undefined) {
-            throw new Error('desktop welcome: login link is unavailable')
-          }
-          await clipboard.writeText(platformLoginUrl(state.attempt.authorizeUrl))
-        },
-        saveApiKey: async (apiKey) => {
-          if (backend.host === undefined || welcomeBackend === undefined) return { ok: false }
-          const saved = await welcomeBackend.save(apiKey)
-          if (!saved.ok) return saved
-          await enterWorkspace()
-          return { ok: true }
-        },
-        skip: enterWorkspace,
-      })
-      const window = welcomeWindow
+    openingLogin ??= (async () => {
+      const window = await openTianjianLoginWindow(gatewayOrigin, locale)
+      loginWindow = window
       window.once('closed', () => {
-        void welcomeBackend?.account.state().then((state) => {
-          if (state.attempt !== null && !enteredWorkspace) return welcomeBackend?.account.cancel(state.attempt.id)
-          return undefined
-        }).catch(() => undefined)
-      })
-      window.once('closed', () => {
-        if (welcomeWindow === window) welcomeWindow = undefined
+        if (loginWindow === window) loginWindow = undefined
         if (enteredWorkspace || recovery.active) return
-        // Nothing runs before the workspace opens. macOS keeps the Dock convention and drops the
-        // unused main window so the next activation rebuilds the welcome; elsewhere the close quits.
+        // Nothing runs before the workspace opens. macOS keeps the Dock convention and
+        // drops the unused main window so the next activation rebuilds the login;
+        // elsewhere the close quits.
         if (process.platform === 'darwin') mainWindow?.destroy()
         else app.quit()
       })
       if (isQuitting() || recovery.active || enteredWorkspace) window.close()
       else mainWindow?.hide()
-    })().finally(() => { openingWelcome = undefined })
-    return openingWelcome
+      return window
+    })().finally(() => { openingLogin = undefined })
+    return openingLogin
+  }
+  /**
+   * First-login failure surface (user story 8): the gateway login page cannot load
+   * when the gateway is unreachable, so offer an explicit retry/exit before quitting.
+   * @param error - the load failure.
+   * @returns the user's choice.
+   */
+  const reportLoginUnavailable = async (error: unknown): Promise<'retry' | 'exit'> => {
+    const choice = await dialog.showMessageBox({
+      type: 'error',
+      title: locale.messages.tianjianLoginUnavailableTitle,
+      message: locale.messages.tianjianLoginUnavailableMessage,
+      detail: error instanceof Error ? error.message : String(error),
+      buttons: [locale.messages.tianjianLoginRetry, locale.messages.tianjianLoginExit],
+      cancelId: 1,
+      defaultId: 0,
+    })
+    return choice.response === 0 ? 'retry' : 'exit'
   }
   const openInitialWindow = async (): Promise<void> => {
     if (quitting || recovery.active) return
-    const state = await readWelcomeState()
+    const preference = await readWelcomeState().catch(() => null)
     if (isQuitting() || backend.state.phase !== 'ready') return
-    locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages)
+    locale = resolveDesktopStartupLocale(preference, systemLanguages)
     writeDesktopLocaleCache(app.getPath('userData'), locale.id)
     windowsLanguage = locale.id
     refreshApplicationMenu()
-    if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey })) {
-      // A later login must retain its own activation policy instead of replaying startup focus.
-      raiseAfterUpdate = false
-      await showWelcome()
+    if (!enteredWorkspace) {
+      await sessionController?.start()
     } else {
       await enterWorkspace()
     }
@@ -1319,7 +1309,7 @@ async function main(): Promise<void> {
   focusPrimaryWindow = () => {
     if (quitting) return
     if (isMandatory()) { mandatoryUI?.focus(); return }
-    const window = welcomeWindow ?? mainWindow
+    const window = loginWindow ?? mainWindow
     if (window === undefined || window.isDestroyed()) {
       try { createMainWindow() } catch (error) { reportFatal(error, 'main'); return }
       void (backend.state.phase === 'ready' ? openInitialWindow() : navigateMain(applicationUrl)).catch((error: unknown) => { reportFatal(error, 'main') })
@@ -1352,8 +1342,8 @@ async function main(): Promise<void> {
     quitConfirmation.dispose()
     backgroundNotice?.dispose()
     tray?.dispose()
-    stopAccount?.()
-    if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.hide()
+    sessionController?.dispose()
+    if (loginWindow !== undefined && !loginWindow.isDestroyed()) loginWindow.hide()
     if (mainWindow !== undefined && !mainWindow.isDestroyed()) mainWindow.hide()
     updateSchedule.dispose()
     updateDialog.dispose()
@@ -1387,8 +1377,8 @@ async function main(): Promise<void> {
     void quitConfirmation.confirm().then((approved) => {
       if (quitting || shellInstallerOwnsQuit) return
       if (approved) { finishQuit(); return }
-      // A quit that started from closing the welcome window destroyed it; a cancelled quit needs it back.
-      if (!enteredWorkspace && !recovery.active) void showWelcome().catch((error: unknown) => { reportFatal(error, 'main') })
+      // A quit that started from closing the login window destroyed it; a cancelled quit needs it back.
+      if (!enteredWorkspace && !recovery.active) void sessionController?.showLogin().catch((error: unknown) => { reportFatal(error, 'main') })
     }).catch((error: unknown) => { console.error(error); if (!quitting && !shellInstallerOwnsQuit) finishQuit() })
   })
 

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadDesktopPackageEnvironment, localMacOSPackageEnvironment, validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
+import { loadDesktopPackageEnvironment, localMacOSPackageEnvironment, resolveTianjianGatewayUrl, validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
 import { resolveWindowsPackageSettings } from '../scripts/windows-package-settings.mjs'
 
 const WINDOWS = { platform: 'win32', arch: 'x64' } as const
@@ -21,6 +21,16 @@ async function withDirectory(action: (directory: string) => Promise<void>): Prom
     await rm(directory, { recursive: true, force: true })
   }
 }
+
+describe('TianJian gateway release setting (spec #108)', () => {
+  it('requires a bare http(s) origin in every packaging mode', () => {
+    expect(() => resolveTianjianGatewayUrl({})).toThrow(/DSH_TIANJIAN_GATEWAY_URL is required/u)
+    expect(() => resolveTianjianGatewayUrl({ DSH_TIANJIAN_GATEWAY_URL: '   ' })).toThrow(/DSH_TIANJIAN_GATEWAY_URL is required/u)
+    expect(() => resolveTianjianGatewayUrl({ DSH_TIANJIAN_GATEWAY_URL: 'not a url' })).toThrow(/not a valid URL/u)
+    expect(() => resolveTianjianGatewayUrl({ DSH_TIANJIAN_GATEWAY_URL: 'http://gateway.internal:8080/login' })).toThrow(/bare gateway origin/u)
+    expect(resolveTianjianGatewayUrl({ DSH_TIANJIAN_GATEWAY_URL: ' http://gateway.internal:8080/ ' })).toBe('http://gateway.internal:8080')
+  })
+})
 
 describe('Desktop local packaging configuration', () => {
   it('loads file-owned compression and defaults to fast Windows archive compression', async () => {
