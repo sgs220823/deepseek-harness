@@ -118,7 +118,7 @@ describe('cold start', () => {
     const outcome = await controller.start()
     expect(outcome).toBe('workspace')
     expect(deps.enterWorkspace).toHaveBeenCalledOnce()
-    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('启动配置下发失败'))
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('startup config push failed'))
   })
 })
 
@@ -166,7 +166,7 @@ describe('login-window polling', () => {
     await vi.advanceTimersByTimeAsync(5)
     expect(deps.calls).toEqual(['showLogin', 'poll:prepare'])
     expect(deps.enterWorkspace).not.toHaveBeenCalled()
-    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('配置下发失败'))
+    expect(deps.log).toHaveBeenCalledWith(expect.stringContaining('config push failed'))
     // Second poll (next interval): the handoff succeeds → workspace.
     await vi.advanceTimersByTimeAsync(10)
     expect(deps.calls).toEqual(['showLogin', 'poll:prepare', 'poll:prepare', 'closeLogin', 'enterWorkspace'])

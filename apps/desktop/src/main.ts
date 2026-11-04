@@ -531,8 +531,8 @@ async function main(): Promise<void> {
         analyticsEnabled = await tianjianBackend.analyticsEnabled().catch(() => false)
         if (!reportedLaunch) { reportedLaunch = true; void track('desktop_app_launch', {}) }
         sessionController = new TianjianSessionController({
-          readCookie: async () => await readTianjianSessionToken(undefined, gatewayOrigin),
-          clearCookie: async () => { await clearTianjianSessionToken(undefined, gatewayOrigin) },
+          readCookie: async () => await readTianjianSessionToken(gatewayOrigin),
+          clearCookie: async () => { await clearTianjianSessionToken(gatewayOrigin) },
           probe: async (token) => {
             try {
               const me = await net.fetch(`${gatewayOrigin}/api/auth/me`, {
@@ -643,7 +643,7 @@ async function main(): Promise<void> {
     return state
   }
 
-  const readWelcomeState = async () => {
+  const readLocalePreference = async (): Promise<string | null> => {
     if (backend.host === undefined || tianjianBackend === undefined) throw new Error('desktop tianjian: backend unavailable')
     return tianjianBackend.readLocalePreference()
   }
@@ -1294,7 +1294,7 @@ async function main(): Promise<void> {
   }
   const openInitialWindow = async (): Promise<void> => {
     if (quitting || recovery.active) return
-    const preference = await readWelcomeState().catch(() => null)
+    const preference = await readLocalePreference().catch(() => null)
     if (isQuitting() || backend.state.phase !== 'ready') return
     locale = resolveDesktopStartupLocale(preference, systemLanguages)
     writeDesktopLocaleCache(app.getPath('userData'), locale.id)

@@ -1,50 +1,59 @@
 /**
- * 天鉴网关契约（ADR-0018）：网关地址解析 + 桌面端固定常量。
+ * TianJian gateway contract (ADR-0018): gateway-origin resolution + desktop-side
+ * contract constants.
  *
- * 网关地址**构建时固定内置**（2026-11-04 拍板，spec #108）：
- * - 打包环境必须在 `.env.windows`/`.env.macos` 提供 `DSH_TIANJIAN_GATEWAY_URL`
- *   （打包脚本校验；缺失/非法直接失败）；
- * - `tsdown` 在主进程 bundle 里把 `process.env.DSH_TIANJIAN_GATEWAY_URL` 内联成
- *   字面量（同 `DSH_CLIENT_VERSION` 的既有做法），因此打包产物**不读运行期
- *   env**，民警无法用环境变量改网关；
- * - 开发态（未打包且未注入）回落本机网关缺省，便于联调。
+ * The gateway origin is **fixed at build time** (spec #108, 2026-11-04 decision):
+ * - the packaging environment must provide `DSH_TIANJIAN_GATEWAY_URL` (validated by
+ *   the packaging scripts; missing/invalid fails the build);
+ * - `tsdown` inlines `process.env.DSH_TIANJIAN_GATEWAY_URL` as a literal into the
+ *   main bundle (same mechanism as `DSH_CLIENT_VERSION`), so the packaged app does
+ *   **not** read the runtime environment — the gateway cannot be redirected at
+ *   runtime by environment variables;
+ * - development (unpackaged, unset) falls back to the local dev gateway.
  *
- * 常量与天鉴仓 `plugins/shared/src/desktop-contract.ts` 同义（跨仓各留一份，
- * 语义以 ADR-0018 为准）：凭据引用名 `DSH_TIANJIAN_GATEWAY_TOKEN`、
- * desktop-config 路径、登录页路径、会话 cookie 与持久化分区。
+ * Constants mirror `plugins/shared/src/desktop-contract.ts` in the TianJian repo;
+ * both sides keep one literal each with ADR-0018 as the single semantic source
+ * (cross-repo drift risk and mitigation are registered in ADR-0018 / spec #108).
  * @module @deepseek-ai/dsh-desktop/tianjian-gateway
  */
 
-/** 凭据引用名（`llm-pi-ai` 的 `apiKeyEnv`；值 = 会话令牌）。 */
+/** Credential reference name (the `llm-pi-ai` `apiKeyEnv`; value = session token). */
 export const TIANJIAN_GATEWAY_TOKEN_REF = 'DSH_TIANJIAN_GATEWAY_TOKEN'
 
-/** 桌面端配置下发端点（网关 `GET /api/auth/desktop-config`）。 */
+/** Desktop config endpoint (gateway `GET /api/auth/desktop-config`). */
 export const TIANJIAN_DESKTOP_CONFIG_PATH = '/api/auth/desktop-config'
 
-/** 网关登录页路径（登录窗口加载 `${origin}${path}`）。 */
+/** Gateway login page path (the login window loads `${origin}${path}`). */
 export const TIANJIAN_LOGIN_PATH = '/login'
 
-/** 天鉴会话 cookie 名（与网页端同源）。 */
+/** TianJian session cookie name (same session as the web client). */
 export const TIANJIAN_SESSION_COOKIE = 'tj_session'
 
-/** 登录窗口专用持久化会话分区（cookie 罐；不进 defaultSession）。 */
+/** Dedicated persistent session partition for the login window's cookie jar. */
 export const TIANJIAN_SESSION_PARTITION = 'persist:tianjian-gateway'
 
-/** 开发态网关缺省（未打包且未注入构建值；仅本机联调）。 */
+/** Development gateway default (unpackaged and no injected build value). */
 export const DEV_TIANJIAN_GATEWAY_ORIGIN = 'http://127.0.0.1:8080'
 
 /**
- * 解析并校验网关基址。
- * @param raw - 构建时注入值（`DSH_TIANJIAN_GATEWAY_URL`）；打包产物里已是字面量。
- * @param packaged - 是否打包运行（缺地址时打包必须失败，开发态回落本机缺省）。
- * @returns 归一化 origin（无尾斜杠、无路径）。
- * @throws {Error} 打包运行缺地址，或值不是 http(s) URL。
+ * Resolve and validate the gateway origin.
+ *
+ * The packaging scripts keep a parallel validator
+ * (`apps/desktop/scripts/desktop-package-environment.mjs`,
+ * `resolveTianjianGatewayUrl`) because `.mjs` cannot import the bundled TS source;
+ * keep the two in lockstep.
+ * @param raw - build-time injected value (`DSH_TIANJIAN_GATEWAY_URL`; a literal in
+ *   the packaged bundle).
+ * @param packaged - whether the app runs packaged (missing origin must fail; dev
+ *   falls back to the local default).
+ * @returns the normalized origin (no trailing slash, no path).
+ * @throws {Error} packaged build without the origin, or a non-origin URL.
  */
 export function resolveTianjianGatewayOrigin(raw: string | undefined, packaged: boolean): string {
   const value = raw?.trim()
   if (value === undefined || value === '') {
     if (packaged) {
-      throw new Error('桌面端构建未内置网关地址：设置 DSH_TIANJIAN_GATEWAY_URL 后重新打包')
+      throw new Error('desktop build has no built-in gateway origin: set DSH_TIANJIAN_GATEWAY_URL and repackage')
     }
     return DEV_TIANJIAN_GATEWAY_ORIGIN
   }
@@ -52,13 +61,13 @@ export function resolveTianjianGatewayOrigin(raw: string | undefined, packaged: 
   try {
     url = new URL(value)
   } catch {
-    throw new Error(`DSH_TIANJIAN_GATEWAY_URL 不是合法 URL：${value}`)
+    throw new Error(`DSH_TIANJIAN_GATEWAY_URL is not a valid URL: ${value}`)
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error(`DSH_TIANJIAN_GATEWAY_URL 只支持 http/https：${value}`)
+    throw new Error(`DSH_TIANJIAN_GATEWAY_URL only supports http/https: ${value}`)
   }
   if (url.pathname !== '/' || url.search !== '' || url.hash !== '' || url.username !== '' || url.password !== '') {
-    throw new Error(`DSH_TIANJIAN_GATEWAY_URL 只能是网关基址（协议 + 主机 + 端口）：${value}`)
+    throw new Error(`DSH_TIANJIAN_GATEWAY_URL must be a bare gateway origin (protocol + host + port): ${value}`)
   }
   return url.origin
 }

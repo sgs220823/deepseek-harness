@@ -1,17 +1,21 @@
 /**
- * 天鉴登录窗口（#111，spec #108）：独立 BrowserWindow 加载网关登录页。
+ * TianJian login window (#111, spec #108): an independent BrowserWindow over the
+ * gateway login page.
  *
- * 安全边界：
- * - 专用**持久化会话分区**（`persist:tianjian-gateway`）持有 `tj_session`
- *   cookie——与工作台的 defaultSession 隔离，主进程可读（HttpOnly 不清除外，
- *   渲染者始终是网关登录页，令牌不暴露给本机渲染进程）；
- * - **无 preload**、`nodeIntegration=false`、`contextIsolation=true`、
- *   `sandbox=true`、`webSecurity=true`；
- * - 只允许导航到网关同源（登录页 → `/portal` 等）；外部链接/新窗口一律拒绝；
- * - 窗口标题/尺寸沿用原欢迎窗口的品牌化设定（600×700、透明标题栏）。
+ * Security boundaries:
+ * - a dedicated **persistent session partition** (`persist:tianjian-gateway`) holds
+ *   the `tj_session` cookie - isolated from the workspace's defaultSession; the main
+ *   process can read it (HttpOnly does not block the main process), while the only
+ *   renderer is the gateway login page, so the token never reaches a local renderer;
+ * - **no preload**, `nodeIntegration=false`, `contextIsolation=true`, `sandbox=true`,
+ *   `webSecurity=true`;
+ * - navigation is restricted to the gateway origin (login page -> `/portal`); external
+ *   sites and new windows are always denied. Window title/size follow the deleted
+ *   welcome window's branding (600x700, transparent title bar).
  *
- * 登录成功判定由会话控制器做（轮询该分区 cookie），本模块只提供窗口与
- * cookie 读写缝（Electron `session` API 可注入，便于单测）。
+ * Login success is decided by the session controller (cookie polling); this module
+ * only provides the window and the cookie read/clear seam (the Electron `session`
+ * API is injectable for unit tests).
  * @module @deepseek-ai/dsh-desktop/tianjian-login-window
  */
 
@@ -23,22 +27,16 @@ import {
   TIANJIAN_SESSION_PARTITION,
 } from './tianjian-gateway.ts'
 
-/** 登录窗口的固定尺寸（沿用原欢迎窗口的版式）。 */
+/** Fixed login-window size (the deleted welcome window's layout). */
 export const TIANJIAN_LOGIN_WINDOW_SIZE = { width: 600, height: 700 } as const
 
 /**
- * 登录窗口构造选项。
- * @param gatewayOrigin - 已归一化的网关基址（由 `resolveTianjianGatewayOrigin` 产出）。
- * @param locale - 壳层本地化文案（标题）。
- * @param platform - 运行平台（标题栏材质分流）。
- * @returns 无 preload 的沙箱窗口选项（专用持久化分区）。
+ * Login-window constructor options.
+ * @param locale - shell locale copy (window title).
+ * @param platform - running platform (title-bar material split).
+ * @returns sandboxed window options without a preload (dedicated persistent partition).
  */
-export function tianjianLoginWindowOptions(
-  gatewayOrigin: string,
-  locale: DesktopLocale,
-  platform: NodeJS.Platform,
-): BrowserWindowConstructorOptions {
-  void gatewayOrigin
+export function tianjianLoginWindowOptions(locale: DesktopLocale, platform: NodeJS.Platform): BrowserWindowConstructorOptions {
   return {
     ...TIANJIAN_LOGIN_WINDOW_SIZE,
     useContentSize: true,
@@ -71,17 +69,18 @@ export function tianjianLoginWindowOptions(
 }
 
 /**
- * 打开登录窗口并等待登录页加载完成。
- * @param gatewayOrigin - 网关基址。
- * @param locale - 壳层文案。
- * @returns 已显示的窗口；加载失败时销毁并抛错（调用方提供重试入口）。
+ * Open the login window and wait for the login page to load.
+ * @param gatewayOrigin - the gateway origin.
+ * @param locale - shell copy.
+ * @returns the shown window; a load failure destroys it and throws (the caller owns retry UX).
  */
 export async function openTianjianLoginWindow(
   gatewayOrigin: string,
   locale: DesktopLocale,
 ): Promise<BrowserWindow> {
-  const window = new BrowserWindow(tianjianLoginWindowOptions(gatewayOrigin, locale, process.platform))
-  // 外部站点/新窗口一律拒绝：登录只发生在网关同源页面（PKI 上线后同源）。
+  const window = new BrowserWindow(tianjianLoginWindowOptions(locale, process.platform))
+  // External sites and new windows are always denied: signing in happens on the
+  // gateway origin only (the PKI entry point later lives on the same origin).
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   window.webContents.on('will-navigate', (event, url) => {
     try {
@@ -96,25 +95,25 @@ export async function openTianjianLoginWindow(
     if (!window.isDestroyed()) window.destroy()
     throw error
   }
-  // 延迟到加载期间被替换/销毁的窗口不再显示（同原欢迎窗口语义）。
+  // A window destroyed/superseded during load is never shown (same as the deleted welcome window).
   if (!window.isDestroyed()) window.show()
   return window
 }
 
-/** 登录窗口分区（`persist:` 前缀 = cookie 跨重启持久化）。 */
+/** The login-window partition (`persist:` = cookies survive restarts). */
 export function tianjianLoginSession(): Session {
   return session.fromPartition(TIANJIAN_SESSION_PARTITION)
 }
 
 /**
- * 读取该分区里的天鉴会话令牌。
- * @param loginSession - 登录窗口分区（缺省 = 本机持久化分区）。
- * @param gatewayOrigin - cookie 所属网关基址。
- * @returns 令牌；无/空 → undefined。
+ * Read the TianJian session token from the partition.
+ * @param gatewayOrigin - gateway origin the cookie belongs to.
+ * @param loginSession - login-window partition (default = the persistent partition).
+ * @returns the token; undefined when missing/empty.
  */
 export async function readTianjianSessionToken(
-  loginSession: Session = tianjianLoginSession(),
   gatewayOrigin: string,
+  loginSession: Session = tianjianLoginSession(),
 ): Promise<string | undefined> {
   const cookies = await loginSession.cookies.get({ url: gatewayOrigin, name: TIANJIAN_SESSION_COOKIE })
   const value = cookies[0]?.value?.trim()
@@ -122,13 +121,13 @@ export async function readTianjianSessionToken(
 }
 
 /**
- * 清除该分区里的天鉴会话 cookie（登出 / 会话失效）。
- * @param loginSession - 登录窗口分区。
- * @param gatewayOrigin - cookie 所属网关基址。
+ * Clear the TianJian session cookie from the partition (sign-out / session expired).
+ * @param gatewayOrigin - gateway origin the cookie belongs to.
+ * @param loginSession - login-window partition (default = the persistent partition).
  */
 export async function clearTianjianSessionToken(
-  loginSession: Session = tianjianLoginSession(),
   gatewayOrigin: string,
+  loginSession: Session = tianjianLoginSession(),
 ): Promise<void> {
   await loginSession.cookies.remove(gatewayOrigin, TIANJIAN_SESSION_COOKIE)
 }

@@ -64,7 +64,7 @@ const ORIGIN = 'http://gateway.internal.test:8080'
 
 describe('tianjianLoginWindowOptions', () => {
   it('uses the dedicated persistent partition with no preload and full sandboxing', () => {
-    const options = tianjianLoginWindowOptions(ORIGIN, LOCALE, 'win32')
+    const options = tianjianLoginWindowOptions(LOCALE, 'win32')
     expect(options).toMatchObject({
       width: 600,
       height: 700,
@@ -82,9 +82,9 @@ describe('tianjianLoginWindowOptions', () => {
   })
 
   it('keeps the welcome-window platform chrome (transparent title bar)', () => {
-    expect(tianjianLoginWindowOptions(ORIGIN, LOCALE, 'win32').titleBarOverlay).toMatchObject({ height: 42 })
-    expect(tianjianLoginWindowOptions(ORIGIN, LOCALE, 'darwin').vibrancy).toBe('menu')
-    expect(tianjianLoginWindowOptions(ORIGIN, LOCALE, 'linux').backgroundColor).toBe('#FFFFFF')
+    expect(tianjianLoginWindowOptions(LOCALE, 'win32').titleBarOverlay).toMatchObject({ height: 42 })
+    expect(tianjianLoginWindowOptions(LOCALE, 'darwin').vibrancy).toBe('menu')
+    expect(tianjianLoginWindowOptions(LOCALE, 'linux').backgroundColor).toBe('#FFFFFF')
   })
 })
 
@@ -121,16 +121,16 @@ describe('openTianjianLoginWindow', () => {
 describe('session-token cookie helpers', () => {
   it('reads and clears the tj_session cookie in the login partition', async () => {
     electron.partitionSession.cookies.get.mockResolvedValue([{ value: ' token-1 ' }])
-    await expect(readTianjianSessionToken(electron.partitionSession as never, ORIGIN)).resolves.toBe('token-1')
+    await expect(readTianjianSessionToken(ORIGIN, electron.partitionSession as never)).resolves.toBe('token-1')
     expect(electron.partitionSession.cookies.get).toHaveBeenCalledWith({ url: ORIGIN, name: 'tj_session' })
-    await readTianjianSessionToken(undefined, ORIGIN)
+    await readTianjianSessionToken(ORIGIN)
     expect(electron.partitionSession.cookies.get).toHaveBeenCalledTimes(2)
-    await clearTianjianSessionToken(electron.partitionSession as never, ORIGIN)
+    await clearTianjianSessionToken(ORIGIN, electron.partitionSession as never)
     expect(electron.partitionSession.cookies.remove).toHaveBeenCalledWith(ORIGIN, 'tj_session')
   })
 
   it('treats a missing or empty cookie as no session', async () => {
     electron.partitionSession.cookies.get.mockResolvedValue([])
-    await expect(readTianjianSessionToken(electron.partitionSession as never, ORIGIN)).resolves.toBeUndefined()
+    await expect(readTianjianSessionToken(ORIGIN, electron.partitionSession as never)).resolves.toBeUndefined()
   })
 })
