@@ -38,3 +38,12 @@ export function validateDesktopPackageEnvironment(
   target: { platform: 'win32' | 'darwin', arch: string },
   options?: { unsigned?: boolean, prepareOnly?: boolean, skipNotarization?: boolean },
 ): void
+
+/**
+ * Require a valid TianJian gateway origin (spec #108 / ADR-0018): packaged builds
+ * fail without it — the address is baked into the main bundle and cannot be
+ * changed at runtime.
+ * @param environment Selected release settings.
+ * @returns The normalized gateway origin.
+ */
+export function resolveTianjianGatewayUrl(environment: NodeJS.ProcessEnv): string

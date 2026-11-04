@@ -197,6 +197,7 @@ const harness = await vi.hoisted(async () => {
       }
     }),
   })
+  let accountListener: ((state: AccountView) => void) | undefined
   let analyticsEnabled = true
   let analyticsEnabledListener: ((enabled: boolean) => void) | undefined
   const analytics = vi.fn(async (_event: unknown) => {})

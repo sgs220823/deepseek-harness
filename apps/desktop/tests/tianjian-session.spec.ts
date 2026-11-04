@@ -12,8 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TianjianSessionController, type TianjianLoginWindow, type TianjianSessionDeps } from '../src/tianjian-session.ts'
 
 interface FakeLoginWindow extends TianjianLoginWindow {
-  isDestroyed: ReturnType<typeof vi.fn>
-  onClosed: ReturnType<typeof vi.fn>
+  isDestroyed(): boolean
+  onClosed(listener: () => void): void
   close(): void
   /** Invoke the registered closed listener (as the real window would). */
   emitClosed(): void

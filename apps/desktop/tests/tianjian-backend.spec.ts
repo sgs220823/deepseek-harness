@@ -33,7 +33,7 @@ function rpcResponse(rpcId: string, value: unknown): Response {
 
 /** Record every `send` with URL + parsed request body for exact payload/order assertions. */
 function recorder(respond: (url: string, request: { rpcId: string; args?: Record<string, unknown> }) => Response) {
-  const calls: Array<{ url: string; init?: RequestInit; body: unknown }> = []
+  const calls: Array<{ url: string; init: RequestInit | undefined; body: unknown }> = []
   const send = vi.fn(async (input: string, init?: RequestInit) => {
     const url = String(input)
     const parsed = init?.body === undefined ? undefined : JSON.parse(String(init.body)) as {
@@ -43,7 +43,8 @@ function recorder(respond: (url: string, request: { rpcId: string; args?: Record
     const body = parsed
     calls.push({ url, init, body })
     const rpcId = body?.rpcId ?? ''
-    return respond(url, { rpcId, args: body?.payload?.args })
+    const args = body?.payload?.args
+    return respond(url, args === undefined ? { rpcId } : { rpcId, args })
   })
   return { calls, send }
 }
