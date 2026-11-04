@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({ root: '', directory: '' }))
 vi.mock('../scripts/desktop-package-environment.mjs', () => ({
   loadDesktopPackageEnvironment: () => ({ DSH_DESKTOP_WINDOWS_TOKEN_PIN: 'credential-sentinel' }),
   validateDesktopPackageEnvironment: () => {},
+  resolveTianjianGatewayUrl: () => {},
 }))
 vi.mock('../scripts/macos-signing-keychain.mjs', () => ({
   withMacOSSigningKeychain: async (_environment: object, action: (environment: object) => Promise<unknown>) => action({}),

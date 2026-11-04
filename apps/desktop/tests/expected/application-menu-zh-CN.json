@@ -23,6 +23,9 @@
     "type": "separator"
   },
   {
+    "label": "退出登录"
+  },
+  {
     "role": "hide",
     "label": "隐藏天鉴智能体平台"
   },
