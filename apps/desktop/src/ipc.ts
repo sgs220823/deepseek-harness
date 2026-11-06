@@ -30,6 +30,10 @@ export const DESKTOP_IPC = {
   fileDragStart: 'dsh-desktop:file-drag-start',
   fileDragRelease: 'dsh-desktop:file-drag-release',
   deviceInfo: 'dsh-desktop:device-info',
+  // Workbench account menu (ticket #115): identity + sign-out behind the shared
+  // `tianjian-web` plugin's desktop bridge.
+  tianjianAccountRead: 'dsh-desktop:tianjian-account-read',
+  tianjianAccountSignOut: 'dsh-desktop:tianjian-account-sign-out',
   localeBootstrap: 'dsh-desktop:locale-bootstrap',
   localeChanged: 'dsh-desktop:locale-changed',
   updatesStatus: 'dsh-desktop:updates-status',

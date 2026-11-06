@@ -47,3 +47,11 @@ export function validateDesktopPackageEnvironment(
  * @returns The normalized gateway origin.
  */
 export function resolveTianjianGatewayUrl(environment: NodeJS.ProcessEnv): string
+
+/**
+ * Resolve the packaged shared workbench plugin (ticket #115): absent means the
+ * build ships without it; when provided the package pieces must be complete.
+ * @param environment Selected release settings.
+ * @returns Absolute plugin directory, or undefined when unset.
+ */
+export function resolveTianjianWebPluginDir(environment: NodeJS.ProcessEnv): string | undefined

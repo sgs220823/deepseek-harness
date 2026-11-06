@@ -17,11 +17,13 @@ import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 const APP_ROOT = fileURLToPath(new URL('..', import.meta.url))
 // TianJian desktop contract (spec #108 / ADR-0018): the gateway origin is a shared
 // release setting carried into the main-bundle define at build time.
-const SHARED_SETTING = /^(?:DSH_TIANJIAN_GATEWAY_URL|DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
+const SHARED_SETTING = /^(?:DSH_TIANJIAN_GATEWAY_URL|DSH_TIANJIAN_WEB_PLUGIN_DIR|DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|NPM_REGISTRY|MANDATORY_UPDATE_(?:CONFIG|(?:TEST|PROD)_ORIGIN))|DOWNLOAD_TEST_RELEASE_ID|DOWNLOAD_PROD_EO_ZONE_ID|DOWNLOAD_(?:TEST|PROD)_(?:ORIGIN|COS_BUCKET|COS_SECRET_ID|COS_SECRET_KEY))$/u
 const WINDOWS_SETTING = /^DSH_DESKTOP_WINDOWS_(?:CER_FILE|SIGNTOOL|KEY_CONTAINER|TOKEN_PIN|SIGNATURE_CACHE_DIR|SIGNATURE_CACHE_CONCURRENCY|PACK_CONCURRENCY|COMPRESSION_LEVEL)$/u
 const MACOS_SETTING = /^(?:DSH_DESKTOP_MACOS_(?:SIGNING_IDENTITY|TEAM_ID|SIGNATURE_CACHE_DIR|PACK_CONCURRENCY|ZIP_COMPRESSION_LEVEL|DOWNLOAD_PROXY|NOTARIZATION_PROXY)|APPLE_(?:API_KEY|API_KEY_ID|API_ISSUER|ID|APP_SPECIFIC_PASSWORD|TEAM_ID|KEYCHAIN|KEYCHAIN_PROFILE)|CSC_(?:LINK|KEY_PASSWORD))$/u
 const AMBIENT_RELEASE_SETTING = /^(?:DSH_DESKTOP_(?:APP_ID|AUTO_UPDATE_ENV|MANDATORY_UPDATE_.*|WINDOWS_.*|MACOS_.*)|APPLE_.*|(?:WIN_)?CSC_.*|DOWNLOAD_(?:TEST|PROD)_.*)$/iu
 const FILE_SETTINGS = ['DSH_DESKTOP_WINDOWS_CER_FILE', 'DSH_DESKTOP_WINDOWS_SIGNTOOL', 'APPLE_API_KEY', 'APPLE_KEYCHAIN', 'CSC_LINK']
+// Directory settings resolve beside the selected dotenv file, like credential files.
+const DIRECTORY_SETTINGS = ['DSH_TIANJIAN_WEB_PLUGIN_DIR']
 
 /**
  * Select local macOS test defaults without reading dotenv files or inheriting release settings.
@@ -134,6 +136,9 @@ function readSettings(path, accepts) {
   for (const name of FILE_SETTINGS) {
     if (settings[name]?.trim()) settings[name] = resolve(dirname(path), settings[name].trim())
   }
+  for (const name of DIRECTORY_SETTINGS) {
+    if (settings[name]?.trim()) settings[name] = resolve(dirname(path), settings[name].trim())
+  }
   return settings
 }
 
@@ -175,6 +180,32 @@ function requireReadableFile(environment, name) {
   catch {
     throw new Error(`desktop package: ${name} must identify a readable local file`)
   }
+}
+
+/**
+ * Resolve the packaged shared workbench plugin (ticket #115): the build copies the
+ * platform repository's `tianjian-web` package into the application resources so
+ * web and desktop load the same account-menu plugin. Absent means the build ships
+ * without the plugin; when provided the package pieces must be complete.
+ * @param {NodeJS.ProcessEnv} environment Selected release settings.
+ * @returns {string | undefined} Absolute plugin directory, or undefined when unset.
+ */
+export function resolveTianjianWebPluginDir(environment) {
+  const value = environment.DSH_TIANJIAN_WEB_PLUGIN_DIR?.trim()
+  if (value === undefined || value === '') return undefined
+  if (!isAbsolute(value)) throw new Error('desktop package: DSH_TIANJIAN_WEB_PLUGIN_DIR must be an absolute directory')
+  /** @type {readonly string[]} */
+  const required = ['package.json', join('src', 'host.ts'), join('dist', 'client.js')]
+  for (const relativePath of required) {
+    try {
+      if (!statSync(join(value, relativePath)).isFile()) throw new Error('not a file')
+      accessSync(join(value, relativePath), constants.R_OK)
+    }
+    catch {
+      throw new Error(`desktop package: DSH_TIANJIAN_WEB_PLUGIN_DIR is missing ${relativePath} (build the platform web package first)`)
+    }
+  }
+  return value
 }
 
 /**

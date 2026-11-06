@@ -10,8 +10,14 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { PROFILE_PATCH_FILE, seedTianjianProfilePatch, tianjianProfilePatchYaml } from '../src/tianjian-profile.ts'
+import {
+  PROFILE_PATCH_FILE,
+  resolveTianjianWebPluginEntry,
+  seedTianjianProfilePatch,
+  tianjianProfilePatchYaml,
+} from '../src/tianjian-profile.ts'
 
 describe('tianjianProfilePatchYaml', () => {
   it('lists the official LLM/account rows as disabled', () => {
@@ -53,5 +59,39 @@ describe('seedTianjianProfilePatch', () => {
     } finally {
       rmSync(parent, { recursive: true, force: true })
     }
+  })
+})
+
+describe('shared workbench plugin insert (ticket #115)', () => {
+  it('resolves the packaged plugin from the application resources', () => {
+    const resources = join('C:', 'Program Files', 'tianjian', 'resources')
+    expect(resolveTianjianWebPluginEntry(true, resources, undefined))
+      .toBe(join(resources, 'tianjian-plugins', 'tianjian-web', 'src', 'host.ts'))
+  })
+
+  it('resolves the development plugin directory only when provided', () => {
+    expect(resolveTianjianWebPluginEntry(false, 'resources', undefined)).toBeUndefined()
+    expect(resolveTianjianWebPluginEntry(false, 'resources', ' D:\\project\\DSH\\天鉴\\web '))
+      .toBe(join('D:\\project\\DSH\\天鉴\\web', 'src', 'host.ts'))
+  })
+
+  it('appends the tianjian-web insert with an absolute file URL', () => {
+    const entry = 'D:\\project\\DSH\\天鉴\\web\\src\\host.ts'
+    expect(tianjianProfilePatchYaml(entry)).toBe([
+      '# TianJian desktop profile: the platform gateway is the only LLM provider and',
+      '# the official account surface is not part of this product (spec #108).',
+      '# Seeded once; later edits in this file are owner-controlled.',
+      '- id: llm-deepseek',
+      '  disabled: true',
+      '- id: llm-deepseek-account',
+      '  disabled: true',
+      '- id: ui-settings-account',
+      '  disabled: true',
+      '# 天鉴桌面：工作台账号菜单（与 web 共用 tianjian-web 插件）',
+      '- insert:',
+      '    - id: tianjian-web',
+      `      name: '${pathToFileURL(entry).href}'`,
+      '',
+    ].join('\n'))
   })
 })
