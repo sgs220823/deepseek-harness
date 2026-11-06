@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { loadDesktopPackageEnvironment, localMacOSPackageEnvironment, resolveTianjianGatewayUrl, validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
+import { loadDesktopPackageEnvironment, localMacOSPackageEnvironment, resolveTianjianGatewayUrl, resolveTianjianWebPluginDir, validateDesktopPackageEnvironment } from '../scripts/desktop-package-environment.mjs'
 import { resolveWindowsPackageSettings } from '../scripts/windows-package-settings.mjs'
 
 const WINDOWS = { platform: 'win32', arch: 'x64' } as const
@@ -398,3 +398,31 @@ it.each(['', '0', '9', 'invalid'])('rejects unsupported workflow ZIP choice %j',
       .toThrow('workflow ZIP compression must be 3 or 7')
   })
 })
+
+describe('shared workbench plugin release setting (ticket #115)', () => {
+  it('is optional: an unset or blank setting ships a build without the plugin', () => {
+    expect(resolveTianjianWebPluginDir({})).toBeUndefined()
+    expect(resolveTianjianWebPluginDir({ DSH_TIANJIAN_WEB_PLUGIN_DIR: '  ' })).toBeUndefined()
+  })
+
+  it('requires an absolute directory with the three packaged pieces', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'tianjian-web-plugin-'))
+    try {
+      expect(() => resolveTianjianWebPluginDir({ DSH_TIANJIAN_WEB_PLUGIN_DIR: 'relative/web' }))
+        .toThrow(/absolute directory/u)
+      expect(() => resolveTianjianWebPluginDir({ DSH_TIANJIAN_WEB_PLUGIN_DIR: root }))
+        .toThrow(/missing package\.json/u)
+      await writeFile(join(root, 'package.json'), '{}')
+      await mkdir(join(root, 'src'), { recursive: true })
+      await writeFile(join(root, 'src', 'host.ts'), '')
+      expect(() => resolveTianjianWebPluginDir({ DSH_TIANJIAN_WEB_PLUGIN_DIR: root }))
+        .toThrow(/missing dist[\\\\/]client\.js/u)
+      await mkdir(join(root, 'dist'), { recursive: true })
+      await writeFile(join(root, 'dist', 'client.js'), '')
+      expect(resolveTianjianWebPluginDir({ DSH_TIANJIAN_WEB_PLUGIN_DIR: root })).toBe(root)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+})
+

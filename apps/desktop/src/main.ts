@@ -44,13 +44,14 @@ import { pruneCrashReports, RendererConsoleTail, writeCrashReport, type CrashRep
 import { OperationJournal } from './operation-journal.ts'
 import { runOperationReportJob, type OperationReportJobResult } from './operation-report-job.ts'
 import { connectTianjianBackend, type TianjianBackend } from './tianjian-backend.ts'
+import type { TianjianAccountInfo } from './tianjian-account.ts'
 import { resolveTianjianGatewayOrigin } from './tianjian-gateway.ts'
 import {
   clearTianjianSessionToken,
   openTianjianLoginWindow,
   readTianjianSessionToken,
 } from './tianjian-login-window.ts'
-import { seedTianjianProfilePatch } from './tianjian-profile.ts'
+import { resolveTianjianWebPluginEntry, seedTianjianProfilePatch } from './tianjian-profile.ts'
 import { TianjianSessionController } from './tianjian-session.ts'
 import { DesktopUpdateJournal } from './update-journal.ts'
 import { DesktopUpdatePreparationError } from './update-error.ts'
@@ -373,7 +374,8 @@ async function main(): Promise<void> {
   // at build time (packaged builds fail fast without it; dev falls back to localhost)
   // and the desktop profile disables the official LLM/account rows on first creation.
   const gatewayOrigin = resolveTianjianGatewayOrigin(process.env.DSH_TIANJIAN_GATEWAY_URL, app.isPackaged)
-  seedTianjianProfilePatch(paths.profile)
+  seedTianjianProfilePatch(paths.profile,
+    resolveTianjianWebPluginEntry(app.isPackaged, process.resourcesPath, process.env.DSH_TIANJIAN_WEB_PLUGIN_DIR))
   // Dock and Finder launches inherit only launchd's environment; every Host shares one login-shell read.
   const loginShellRead = new AbortController()
   // The probe runs in its own process group, which outlives Desktop unless the read is aborted.
@@ -474,6 +476,9 @@ async function main(): Promise<void> {
   // facade, and the login-window session controller replace the official account flow.
   let tianjianBackend: TianjianBackend | undefined
   let sessionController: TianjianSessionController | undefined
+  // Ticket #115: identity from the last successful desktop-config push, served to
+  // the workbench account menu through the preload bridge; cleared on sign-out.
+  let tianjianAccount: TianjianAccountInfo | undefined
   let loginWindow: BrowserWindow | undefined
   let reportedLaunch = false
   let analyticsEnabled = false
@@ -505,6 +510,20 @@ async function main(): Promise<void> {
     })
     navigation = next
     return next.promise
+  }
+  /**
+   * Sign out with the application-menu effect (#113): clear the session cookie, unset
+   * the credential reference, hide the workspace, and show the login window. The
+   * account menu (ticket #115) reaches this through the preload bridge, so both
+   * entries share one effect. The next workspace entry reloads the document so the
+   * shared account menu re-reads the identity of the account that signs in next.
+   */
+  const signOutTianjian = async (): Promise<void> => {
+    if (sessionController === undefined) return
+    tianjianAccount = undefined
+    enteredWorkspace = false
+    navigation = undefined
+    await sessionController.signOut().catch((error: unknown) => { console.error(error) })
   }
   const platformView = new DesktopPlatformView(join(app.getAppPath(), 'lib', 'preload-platform-account.cjs'),
     () => locale.id === 'zh-CN' ? 'zh_CN' : 'en_US', process.platform === 'win32' ? 'win32' : 'darwin',
@@ -548,6 +567,13 @@ async function main(): Promise<void> {
             if (backend === undefined) throw new Error('desktop tianjian: backend unavailable')
             const config = await backend.fetchDesktopConfig(token)
             await backend.applyConfiguration(token, config)
+            // The account menu reads this identity; the config push above must
+            // succeed before the workspace can claim a signed-in account.
+            tianjianAccount = {
+              username: config.account.username,
+              displayName: config.account.display_name,
+              role: config.account.role,
+            }
           },
           showLogin: async () => {
             const window = await showTianjianLogin()
@@ -875,6 +901,17 @@ async function main(): Promise<void> {
     // (spec #108): the workspace has no official API-key onboarding entry.
     return false
   })
+  // Workbench account menu (ticket #115): the shared `tianjian-web` browser half
+  // reads the shell's identity and signs out through the shell, because the
+  // application document has no gateway origin to call same-origin HTTP.
+  ipcMain.handle(DESKTOP_IPC.tianjianAccountRead, (event) => {
+    assertProductSender(event)
+    return tianjianAccount ?? null
+  })
+  ipcMain.handle(DESKTOP_IPC.tianjianAccountSignOut, async (event) => {
+    assertProductSender(event)
+    await signOutTianjian()
+  })
   ipcMain.on(DESKTOP_IPC.onboardingActive, (event, active: unknown) => {
     const window = mainWindow
     if (window === undefined || window.isDestroyed() || event.sender !== window.webContents
@@ -1070,11 +1107,7 @@ async function main(): Promise<void> {
     // TianJian session (spec #108): explicit sign-out supports shared machines; it
     // clears the gateway session cookie and credential reference, then shows the
     // login window again without touching the local instance.
-    { label: currentDesktopLocale().messages.signOutMenu, click: () => {
-      if (sessionController === undefined) return
-      enteredWorkspace = false
-      void sessionController.signOut().catch((error: unknown) => { console.error(error) })
-    } },
+    { label: currentDesktopLocale().messages.signOutMenu, click: () => { void signOutTianjian() } },
     ...hideCommands,
     { role: 'quit', ...(darwin ? { label: currentDesktopLocale().messages.quitApplication }
       : process.platform === 'win32' ? { label: currentDesktopLocale().messages.exitApplication } : {}) },

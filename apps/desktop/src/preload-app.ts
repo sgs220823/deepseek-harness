@@ -4,6 +4,7 @@ import type { FileSaveResult } from '@deepseek-ai/dsh-client-ui-file-actions/typ
 import type { DesktopShortcutInput, ShortcutConfigSnapshot, ShortcutSaveResult } from '@deepseek-ai/dsh-client-shortcuts/protocol'
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { DESKTOP_IPC, SCHEME, type DshDesktopProductApi, type DesktopUpdatePresentation } from './ipc.ts'
+import type { TianjianAccountBridge, TianjianAccountInfo } from './tianjian-account.ts'
 import { PLATFORM_IPC } from './platform-ipc.ts'
 import { markDocumentPlatform, syncWindowFullscreen } from './preload-platform.ts'
 import { syncNativeTheme } from './preload-theme.ts'
@@ -109,6 +110,12 @@ if (location.protocol === `${SCHEME}:` && location.hostname === 'app') {
     setBounds: (bounds: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke(PLATFORM_IPC.bounds, bounds),
     close: () => ipcRenderer.invoke(PLATFORM_IPC.close),
   })
+  // Ticket #115: the shared `tianjian-web` account menu reads the signed-in identity
+  // and signs out through the shell; the application document has no gateway origin.
+  contextBridge.exposeInMainWorld('__DSH_TIANJIAN_ACCOUNT__', {
+    read: () => ipcRenderer.invoke(DESKTOP_IPC.tianjianAccountRead) as Promise<TianjianAccountInfo | null>,
+    signOut: () => ipcRenderer.invoke(DESKTOP_IPC.tianjianAccountSignOut) as Promise<void>,
+  } satisfies TianjianAccountBridge)
 }
 
 markDocumentPlatform()
