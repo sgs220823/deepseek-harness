@@ -574,6 +574,11 @@ async function main(): Promise<void> {
               displayName: config.account.display_name,
               role: config.account.role,
             }
+            // The workspace document may already be loaded — cold start navigates before
+            // the session probe, and the login window leaves the pre-login document in
+            // place. The next workspace entry must load it again so the shared account
+            // menu re-reads this identity through the preload bridge.
+            navigation = undefined
           },
           showLogin: async () => {
             const window = await showTianjianLogin()
